@@ -1,0 +1,32 @@
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+.claude/
+
+# Build artifacts
+**/node_modules/
+**/dist/
+**/build/
+**/target/
+**/.gradle/
+**/uploads/
+**/__pycache__/
+*.log
+
+# Medical image datasets (kept out of git, see README)
+/benign/
+/malignant/
+/bbox_labels/
+*.dcm
+thyroai-platform/tools/images/
+thyroai-platform/tools/bulk_uploader/test.jpg

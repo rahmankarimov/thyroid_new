@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  patient-panel:
+    build:
+      context: ./doctor-panel
+      dockerfile: Dockerfile
+    container_name: new-patient-panel
+    ports:
+      - "8081:80"
+    restart: unless-stopped

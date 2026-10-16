@@ -1,0 +1,1 @@
+ALTER TABLE user_permissions ADD COLUMN IF NOT EXISTS can_see_patients BOOLEAN NOT NULL DEFAULT FALSE;

@@ -1,0 +1,15 @@
+package com.thyroai.common;
+
+public enum AuditAction {
+    LOGIN,
+    LOGOUT,
+    ANNOTATION_ADDED,
+    ANNOTATION_DELETED,
+    PATHOLOGY_SUBMITTED,
+    AI_TOGGLE,
+    IMAGE_VIEWED,
+    BATCH_APPROVED,
+    SETTINGS_CHANGED,
+    DICOM_STUDY_LINKED,
+    DICOM_STUDY_DISCARDED
+}

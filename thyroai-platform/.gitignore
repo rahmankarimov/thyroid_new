@@ -1,0 +1,30 @@
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+.claude/
+
+# Build artifacts (any service)
+**/node_modules/
+**/dist/
+**/build/
+**/.gradle/
+**/target/
+**/uploads/
+**/.vercel/
+**/__pycache__/
+*.log
+poc-storage/
+
+# Test DICOM samples (large / PHI-sensitive)
+tools/images/
+*.dcm

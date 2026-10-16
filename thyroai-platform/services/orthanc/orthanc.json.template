@@ -1,0 +1,32 @@
+{
+    "Name": "${ORTHANC_NAME}",
+    "DicomAet": "${ORTHANC_DICOM_AET}",
+    "DicomPort": 4242,
+    "HttpPort": 8042,
+    "RemoteAccessAllowed": true,
+    "AuthenticationEnabled": true,
+    "RegisteredUsers": {
+        "${ORTHANC_ADMIN_USER}": "${ORTHANC_ADMIN_PASS}",
+        "${ORTHANC_BASIC_USER}": "${ORTHANC_BASIC_PASS}"
+    },
+    "StableAge": 30,
+    "StorageDirectory": "/var/lib/orthanc/db",
+    "IndexDirectory": "/var/lib/orthanc/db",
+    "DicomAlwaysAllowStore": false,
+    "Plugins": [
+        "/usr/share/orthanc/plugins/"
+    ],
+    "DicomModalities": {
+        "US_SIM": [
+            "US_SIM",
+            "127.0.0.1",
+            104
+        ],
+        "USG": [
+            "USG",
+            "192.168.1.50",
+            104
+        ]
+    },
+    "PythonScript": "/etc/orthanc/plugins/on_stable_study_rabbitmq.py"
+}

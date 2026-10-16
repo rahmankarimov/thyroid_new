@@ -1,0 +1,49 @@
+# Profiles: use env vars for Docker; defaults keep local bootRun working.
+spring:
+  application:
+    name: thyroid-medical-imaging-app
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:orthanc}
+    password: ${RABBITMQ_PASS:orthancpass}
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/medical_imaging}
+    username: ${SPRING_DATASOURCE_USERNAME:app}
+    password: ${SPRING_DATASOURCE_PASSWORD:apppass}
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+server:
+  port: ${SERVER_PORT:8081}
+
+app:
+  rabbitmq:
+    queue: ${QUEUE_NAME:orthanc.stable-study}
+
+orthanc:
+  base-url: ${ORTHANC_BASE_URL:http://localhost:8042}
+  username: ${ORTHANC_BASIC_USER:orthanc}
+  password: ${ORTHANC_BASIC_PASS:orthanc}
+
+# ThyroAI clinical backend. Every imported study is pushed here so it becomes a
+# patient-facing examination. ingest-key must match thyroai.dicom.ingest-key on that side.
+thyroai:
+  base-url:   ${THYROAI_BASE_URL:http://localhost:8080}
+  ingest-key: ${THYROAI_INGEST_KEY:}
+  enabled:    ${THYROAI_INGEST_ENABLED:true}
+
+s3:
+  endpoint: ${S3_ENDPOINT:http://localhost:9000}
+  access-key: ${S3_ACCESS_KEY:minio}
+  secret-key: ${S3_SECRET_KEY:minio123}
+  bucket: ${S3_BUCKET:medical-imaging}
+  region: ${S3_REGION:us-east-1}
+
+storage:
+  local-root: ${STORAGE_LOCAL_ROOT:./poc-storage}
