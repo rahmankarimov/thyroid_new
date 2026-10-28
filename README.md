@@ -1,51 +1,73 @@
 # ThyroAI
 
-Thyroid ultrasound review platform. Doctors rate images with ACR TI-RADS, draw annotations and see the AI bounding-box suggestions. Admins can see doctor activity and create doctor accounts.
+Thyroid ultrasound review & crowdsourcing platform. Doctors rate ultrasound images with ACR TI-RADS, draw annotations, and toggle AI bounding-box suggestions. Admins can monitor doctor rating activity, inspect rated images, and create new doctor accounts.
 
-## Structure
+---
 
-```
-doctor-panel/              React + Vite doctor panel (also includes the Admin Dashboard at /admin)
-docker-compose.yml         Runs only the doctor panel (port 8081), against a backend on host port 8080
-thyroai-platform/
-  docker-compose.yml       Full stack: postgres, rabbitmq, minio, orthanc, clinical-backend, imaging-service, panels
-  .env.example             Copy to .env and fill in the values
-  services/clinical-backend  Spring Boot API (port 8080)
-  services/imaging-service   DICOM ingest pipeline
-  services/orthanc           Orthanc DICOM server
-  frontends/                 admin-panel, super-admin-panel
-  infra/postgres             DB init scripts
-  tools/bulk_uploader        Node script for bulk-uploading the image dataset
-```
+## Prerequisites
 
-## Running
+- **Docker Desktop** (running)
+- **Node.js 18+** (only needed if you are bulk-uploading the local image dataset)
 
-Requirements: Docker Desktop.
+---
+
+## Step-by-Step Setup Guide
+
+### 1. Clone the repository
 
 ```bash
-# 1. Backend and infrastructure
-cd thyroai-platform
-cp .env.example .env        # then set the passwords and JWT_SECRET (openssl rand -base64 48)
-docker compose up --build -d
+git clone https://github.com/rahmankarimov/thyroid_new.git
+cd thyroid_new
+```
 
-# 2. Doctor panel (from the repo root)
+### 2. Configure & start the backend and infrastructure
+
+```bash
+cd thyroai-platform
+cp .env.example .env
+docker compose up --build -d
+```
+
+> Wait ~1–2 minutes on the first boot until `thyroai-postgres`, `thyroai-minio`, and `thyroai-clinical-backend` show `(healthy)` in `docker ps`.
+
+### 3. Start the Doctor & Admin Web Panel (port 8081)
+
+```bash
 cd ..
 docker compose up --build -d patient-panel
 ```
 
-- Doctor panel: http://localhost:8081 (the full-stack compose also serves it on `DOCTOR_PANEL_PORT`, 3000 by default)
-- Backend API: http://localhost:8080/api/v1
+### 4. (Optional) Upload the Ultrasound Dataset & Bounding Boxes
 
-Admin and super-admin users go straight to `/admin` after login.
+Because medical image datasets are large, they are not tracked in Git. To load the 5,000 images and YOLO bounding boxes into MinIO and PostgreSQL:
 
-## Dataset
+1. Place the three dataset folders in the root of the repository (`thyroid_new/`):
+   ```text
+   thyroid_new/
+   ├── benign/          # benign ultrasound images (.jpg / .png)
+   ├── malignant/       # malignant ultrasound images (.jpg / .png)
+   └── bbox_labels/     # YOLO-format bounding-box labels (.txt)
+   ```
+2. Run the bulk uploader script (it automatically reads credentials from `thyroai-platform/.env`):
+   ```bash
+   cd thyroai-platform/tools/bulk_uploader
+   npm install
+   node upload.js
+   ```
 
-The image datasets are **not** in this repository. Put them in the repo root:
+---
 
-```
-benign/        benign ultrasound images
-malignant/     malignant ultrasound images
-bbox_labels/   YOLO-format bounding-box labels (one .txt per image)
-```
+## URLs & Default Credentials
 
-Then upload them with `thyroai-platform/tools/bulk_uploader` (`npm install`, then `node upload.js`).
+| Service | URL |
+| :--- | :--- |
+| **Main Web App (Doctor Panel + Admin Dashboard)** | [http://localhost:8081](http://localhost:8081) |
+| **Backend API / Swagger UI** | [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html) |
+| **MinIO Console** | [http://localhost:9001](http://localhost:9001) |
+
+### Default Login Accounts
+
+| Role | Email | Password | Notes |
+| :--- | :--- | :--- | :--- |
+| **Super Admin** | `superadmin@thyroai.com` | `Demo1234` | Automatically seeded on first boot; redirects to `/admin` |
+| **Create Doctors** | *(via `/admin`)* | *(chosen by admin)* | Log in as `superadmin@thyroai.com` on `/admin` and use the **Create Doctor Account** form |

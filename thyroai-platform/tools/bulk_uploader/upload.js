@@ -4,25 +4,37 @@ const { Client } = require('minio');
 const { Client: PgClient } = require('pg');
 const { v4: uuidv4 } = require('uuid');
 
+// Load .env from thyroai-platform if present
+const envFile = path.resolve(__dirname, '../../.env');
+if (fs.existsSync(envFile)) {
+    for (const line of fs.readFileSync(envFile, 'utf-8').split(/\r?\n/)) {
+        const match = line.match(/^([A-Z0-9_]+)=(.*)$/);
+        if (match && !process.env[match[1]]) {
+            process.env[match[1]] = match[2].trim();
+        }
+    }
+}
+
+const minioPort = parseInt(process.env.MINIO_API_PORT || '9000', 10);
 const minioClient = new Client({
     endPoint: 'localhost',
-    port: 9000,
+    port: minioPort,
     useSSL: false,
-    accessKey: 'minio',
+    accessKey: process.env.MINIO_ROOT_USER || 'minio',
     secretKey: process.env.MINIO_ROOT_PASSWORD || 'minio12345'
 });
-const bucketName = 'medical-imaging';
+const bucketName = process.env.MINIO_BUCKET || 'medical-imaging';
 
 const pgClient = new PgClient({
-    user: 'postgres',
+    user: process.env.POSTGRES_USER || 'postgres',
     host: 'localhost',
     database: 'thyroaidb',
     password: process.env.POSTGRES_PASSWORD || 'thyroai_dev_pass',
-    port: 5432,
+    port: parseInt(process.env.POSTGRES_PORT || '5432', 10),
 });
 
-const IMAGES_DIR = 'C:\\Users\\Rahman\\IdeaProjects\\Thyroai_Project_new';
-const BBOX_DIR = 'C:\\Users\\Rahman\\IdeaProjects\\Thyroai_Project_new\\bbox_labels';
+const IMAGES_DIR = path.resolve(__dirname, '../../..');
+const BBOX_DIR = path.join(IMAGES_DIR, 'bbox_labels');
 
 async function main() {
     await pgClient.connect();
@@ -33,6 +45,20 @@ async function main() {
         await minioClient.makeBucket(bucketName);
         console.log('Bucket created: ' + bucketName);
     }
+
+    // Ensure public read policy so browser can load images directly
+    const publicReadPolicy = {
+        Version: '2012-10-17',
+        Statement: [
+            {
+                Effect: 'Allow',
+                Principal: { AWS: ['*'] },
+                Action: ['s3:GetObject'],
+                Resource: [`arn:aws:s3:::${bucketName}/*`]
+            }
+        ]
+    };
+    await minioClient.setBucketPolicy(bucketName, JSON.stringify(publicReadPolicy));
 
     const categories = ['malignant', 'benign'];
     let count = 0;
@@ -52,8 +78,11 @@ async function main() {
 
             const minioObjectName = 'dataset/' + cat + '/' + baseName + '-' + Date.now() + ext;
             const fileStream = fs.createReadStream(imagePath);
-            await minioClient.putObject(bucketName, minioObjectName, fileStream);
-            const minioUrl = 'http://localhost:9001/' + bucketName + '/' + minioObjectName;
+            const contentType = ext.toLowerCase() === '.png' ? 'image/png' : 'image/jpeg';
+            await minioClient.putObject(bucketName, minioObjectName, fileStream, undefined, {
+                'Content-Type': contentType
+            });
+            const minioUrl = `http://localhost:${minioPort}/${bucketName}/${minioObjectName}`;
 
             let bboxData = null;
             if (fs.existsSync(bboxPath)) {
@@ -94,8 +123,8 @@ async function main() {
                 if (bboxData) {
                     const annotationId = uuidv4();
                     await pgClient.query(
-                        'INSERT INTO annotations (id, image_series_id, patient_id, path, comment, color) VALUES ($1, $2, $3, $4, $5, $6)',
-                        [annotationId, seriesId, patientId, bboxData, 'Ground Truth BBox', '#ef4444']
+                        'INSERT INTO annotations (id, image_series_id, patient_id, path, comment, color, shared) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                        [annotationId, seriesId, patientId, bboxData, 'Ground Truth BBox', '#ef4444', true]
                     );
                 }
 
