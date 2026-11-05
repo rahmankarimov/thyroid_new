@@ -77,6 +77,7 @@ export function ExaminationDetailPage() {
   const { patientId, examId } = useParams<{ patientId: string; examId: string }>();
   const navigate = useNavigate();
   const showToast = useContext(ToastContext);
+  const t = useT();
   const widgets = useWidgetSettings();
   const windowWidth = useWindowWidth();
   const isSmallScreen = windowWidth < 1000;
