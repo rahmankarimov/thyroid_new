@@ -198,6 +198,15 @@ button:active {
 }
 
 /* ── Responsive sidebar ─────────────────────────────────────────────── */
+.sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  border-right: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
 .sidebar {
   width: var(--sidebar-w) !important;
   min-width: var(--sidebar-w) !important;

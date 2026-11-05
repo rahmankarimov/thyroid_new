@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useContext, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Pen, Eraser, ChevronLeft, ChevronRight, Trash2, Download, Plus, X, Lock, Square, Circle, ArrowUpRight, LogOut } from "lucide-react";
+import {
+  Pen, Eraser, ChevronLeft, ChevronRight, Trash2, Download, Plus, X, Lock,
+  Square, Circle, ArrowUpRight, LogOut, ZoomIn, ZoomOut, RotateCcw, Hand, Undo2
+} from "lucide-react";
 import { medicalDataService } from "../services/medicalDataService";
 import { imageUrl } from "../services/api";
 import { formatDateDisplay } from "../components/DatePicker";
@@ -13,6 +16,8 @@ import { useWidgetSettings } from "../hooks/useWidgetSettings";
 import { useWindowWidth } from "../hooks/useWindowWidth";
 import type { Annotation, ExaminationMetric, ImageSeries, Patient, PathologyResult } from "../types/medical";
 import { ToastContext } from "../App";
+
+type ActiveTool = DrawTool | "pan";
 
 const COLORS = ["#ffffff", "#facc15", "#ef4444", "#22d3ee"];
 
@@ -37,31 +42,29 @@ interface AnnotationModalProps {
 function AnnotationModal({ onSave, onDiscard }: AnnotationModalProps) {
   const t = useT();
   const [comment, setComment] = useState("");
-  const [err, setErr] = useState("");
 
   function handleSave() {
-    if (comment.trim().length < 10) { setErr(t("modal.minComment")); return; }
-    onSave(comment.trim());
+    const text = comment.trim();
+    onSave(text.length > 0 ? text : "Annotation");
   }
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(38,48,63,0.35)", backdropFilter: "blur(2px)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--bg-surface)", borderRadius: "var(--radius-lg)", padding: 28, width: 440, boxShadow: "var(--shadow-lg)" }}>
-        <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700 }}>{t("modal.title")}</h3>
+      <div style={{ background: "var(--bg-surface)", borderRadius: "var(--radius-lg)", padding: 24, width: 420, boxShadow: "var(--shadow-lg)" }}>
+        <h3 style={{ margin: "0 0 14px", fontSize: 16, fontWeight: 700, color: "var(--text-primary)" }}>{t("modal.title")}</h3>
         <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", display: "block", marginBottom: 6 }}>{t("modal.label")}</label>
         <textarea
           value={comment}
-          onChange={(e) => { setComment(e.target.value); setErr(""); }}
-          rows={4}
-          placeholder={t("modal.placeholder")}
-          style={{ width: "100%", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", fontSize: 13, resize: "vertical", outline: "none", boxSizing: "border-box", fontFamily: "Manrope, system-ui, sans-serif" }}
+          onChange={(e) => setComment(e.target.value)}
+          rows={3}
+          placeholder="E.g. Hypoechoic nodule (optional)"
+          style={{ width: "100%", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", fontSize: 13, resize: "vertical", outline: "none", boxSizing: "border-box", fontFamily: "Manrope, system-ui, sans-serif", background: "var(--bg-base)", color: "var(--text-primary)" }}
         />
-        {err && <p style={{ color: "var(--accent-danger)", fontSize: 12, margin: "4px 0 0" }}>{err}</p>}
-        <div style={{ display: "flex", gap: 10, marginTop: 16, justifyContent: "flex-end" }}>
-          <button onClick={onDiscard} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 10, padding: "8px 18px", cursor: "pointer", fontSize: 13, color: "var(--text-secondary)" }}>
+        <div style={{ display: "flex", gap: 10, marginTop: 14, justifyContent: "flex-end" }}>
+          <button onClick={onDiscard} style={{ background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "7px 16px", cursor: "pointer", fontSize: 13, color: "var(--text-secondary)" }}>
             {t("common.discard")}
           </button>
-          <button onClick={handleSave} style={{ background: "var(--accent-blue)", color: "#fff", border: "none", borderRadius: 10, padding: "8px 18px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+          <button onClick={handleSave} style={{ background: "var(--accent-blue)", color: "#fff", border: "none", borderRadius: 8, padding: "7px 18px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
             {t("common.save")}
           </button>
         </div>
@@ -79,10 +82,21 @@ export function ExaminationDetailPage() {
   const isSmallScreen = windowWidth < 1000;
   const annotationPanelWidth = windowWidth >= 1200 ? 280 : 200;
 
+  const rawUser = localStorage.getItem("thyroai_user");
+  const currentUser = rawUser ? JSON.parse(rawUser) : null;
+  const userIsAdmin = currentUser?.role === "admin" || currentUser?.role === "super_admin";
+
   const [showAnnotationOverlay, setShowAnnotationOverlay] = useState(false);
-  // The annotation list panel is about *viewing* saved annotations, so it is
-  // gated on showViewAnnotations — independent of the drawing tool.
   const showAnnotationPanel = widgets.showViewAnnotations && (!isSmallScreen || showAnnotationOverlay);
+
+  // Left pane (TI-RADS) collapse state
+  const [tiradsCollapsed, setTiradsCollapsed] = useState(false);
+
+  // Zoom & Pan state
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,37 +113,30 @@ export function ExaminationDetailPage() {
         const target = p.examinations.find((e) => e.id === examId) ?? p.examinations[0];
         if (target) {
           setSelectedExamId(target.id);
-          if (target.imageSeries[0]) setSelectedSeries(target.imageSeries[0]);
+          const first = target.imageSeries?.[0] ?? null;
+          setSelectedSeries(first);
           setLocalPathology(target.pathologyResult ?? null);
         }
       })
-      .catch(() => {
-        setLoading(false);
-        navigate("/patients");
-      })
+      .catch(() => {})
       .finally(() => setLoading(false));
-  }, [patientId]);
+  }, [patientId, examId]);
 
-  useEffect(() => {
-    if (!patient) return;
-    const exam = patient.examinations.find((e) => e.id === selectedExamId);
-    setLocalPathology(exam?.pathologyResult ?? null);
-  }, [patient, selectedExamId]);
+  const { annotations, addAnnotation, removeAnnotation, setShared } = useAnnotations(selectedSeries?.id ?? "");
 
-  const { annotations, addAnnotation, removeAnnotation, setShared, accessDenied } = useAnnotations(selectedSeries?.id ?? "");
+  const manualAnnotations = useMemo(
+    () => annotations.filter((a) => a.comment !== "Ground Truth BBox"),
+    [annotations]
+  );
+  const aiAnnotations = useMemo(
+    () => annotations.filter((a) => a.comment === "Ground Truth BBox"),
+    [annotations]
+  );
 
-  const manualAnnotations: Annotation[] = useMemo(() => annotations.filter((a: Annotation) => Array.isArray(a.path)), [annotations]);
-  const aiAnnotations: Annotation[] = useMemo(() => annotations.filter((a: Annotation) => !Array.isArray(a.path) && (a.path as any)?.raw_bbox), [annotations]);
-
-  useEffect(() => {
-    if (accessDenied) navigate("/patients");
-  }, [accessDenied, navigate]);
-
-  const t = useT();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [drawMode, setDrawMode] = useState(false);
+  const [activeTool, setActiveTool] = useState<ActiveTool | null>(null);
   const [tool, setTool] = useState<DrawTool>("pen");
-  // Removed showTirads state
   const shapeStartRef = useRef<Pt | null>(null);
   const [selectedColor, setSelectedColor] = useState(COLORS[0]);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -139,12 +146,10 @@ export function ExaminationDetailPage() {
 
   const [diagnosis, setDiagnosis] = useState<string>("");
   const [pathNotes, setPathNotes] = useState("");
-  // IDs visible on canvas (null = all visible; Set = only listed IDs shown)
   const [visibleAnnotationIds, setVisibleAnnotationIds] = useState<Set<string> | null>(null);
-  // ID of annotation card being hovered in the right panel
   const [hoveredAnnotationId, setHoveredAnnotationId] = useState<string | null>(null);
 
-  // ── Manual key/value pairs (measurements) ──────────────────────────────────
+  // Key/value measurements
   const [patientMetrics, setPatientMetrics] = useState<ExaminationMetric[]>([]);
   const [showAddMetric, setShowAddMetric] = useState(false);
   const [newMetricKey, setNewMetricKey] = useState("");
@@ -158,10 +163,8 @@ export function ExaminationDetailPage() {
 
   useEffect(() => { reloadMetrics(); }, [reloadMetrics]);
 
-  // Manual values entered on the selected examination (editable until diagnosis is confirmed).
   const currentMetrics = patientMetrics.filter((m) => m.examinationId === selectedExamId);
   const metricsLocked = !!localPathology;
-  // Manual values from the patient's other examinations, grouped by exam date (read-only history).
   const metricHistory = (() => {
     const byExam = new Map<string, ExaminationMetric[]>();
     patientMetrics
@@ -181,22 +184,26 @@ export function ExaminationDetailPage() {
   })();
 
   const currentExam = patient?.examinations.find((e) => e.id === selectedExamId);
-
   const aiScore = currentExam?.aiScore;
 
-  // Reset canvas visibility when switching series
+  // Reset zoom & pan and canvas visibility when switching series
   useEffect(() => {
     setVisibleAnnotationIds(null);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setIsPanning(false);
   }, [selectedSeries?.id]);
 
-  // Close overlay when resizing back to large screen
   useEffect(() => {
     if (!isSmallScreen) setShowAnnotationOverlay(false);
   }, [isSmallScreen]);
 
   useEffect(() => {
-    if (!widgets.showAnnotationTool) setDrawMode(false);
-  }, [widgets.showAnnotationTool]);
+    if (!widgets.showAnnotationTool) {
+      setDrawMode(false);
+      if (activeTool !== "pan") setActiveTool(null);
+    }
+  }, [widgets.showAnnotationTool, activeTool]);
 
   useEffect(() => {
     if (!widgets.showAISuggestion) setShowAI(false);
@@ -250,20 +257,17 @@ export function ExaminationDetailPage() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d")!;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // Only render saved annotations onto the image when viewing is enabled.
     if (!widgets.showViewAnnotations) return;
     const visibleManual = visibleAnnotationIds === null
       ? manualAnnotations
       : manualAnnotations.filter((a: Annotation) => visibleAnnotationIds.has(a.id));
     const visible = showAI ? [...visibleManual, ...aiAnnotations] : visibleManual;
 
-    // Draw all non-hovered annotations at normal weight
     drawAnnotations(ctx, canvas.width, canvas.height,
       visible.filter((a) => a.id !== hoveredAnnotationId));
 
-    // Draw hovered annotation last, on top, with glow
     const hovered = visible.find((a) => a.id === hoveredAnnotationId);
-    if (hovered && hovered.path.length >= 2) {
+    if (hovered && Array.isArray(hovered.path) && hovered.path.length >= 2) {
       ctx.save();
       ctx.shadowColor = hovered.color;
       ctx.shadowBlur = 16;
@@ -285,7 +289,6 @@ export function ExaminationDetailPage() {
     return { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height };
   }
 
-  // Clear the canvas and redraw only the saved (visible) annotations.
   function redrawSaved() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -298,7 +301,6 @@ export function ExaminationDetailPage() {
     drawAnnotations(ctx, canvas.width, canvas.height, visible);
   }
 
-  // Redraw saved annotations, then stroke the in-progress path on top.
   function renderPreview(path: Pt[]) {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -315,7 +317,44 @@ export function ExaminationDetailPage() {
     ctx.stroke();
   }
 
+  // --- Zoom & Pan handlers ---
+  function handleZoomIn() {
+    setZoom((prev) => Math.min(+(prev + 0.25).toFixed(2), 4));
+  }
+
+  function handleZoomOut() {
+    setZoom((prev) => {
+      const next = Math.max(+(prev - 0.25).toFixed(2), 1);
+      if (next === 1) setPan({ x: 0, y: 0 });
+      return next;
+    });
+  }
+
+  function handleResetZoom() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
+
+  function handleWheel(e: React.WheelEvent) {
+    if (e.deltaY < 0) {
+      setZoom((prev) => Math.min(+(prev + 0.2).toFixed(2), 4));
+    } else {
+      setZoom((prev) => {
+        const next = Math.max(+(prev - 0.2).toFixed(2), 1);
+        if (next === 1) setPan({ x: 0, y: 0 });
+        return next;
+      });
+    }
+  }
+
   function handleMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
+    // If pan tool or (not in drawMode and zoomed in) or middle mouse button
+    if (activeTool === "pan" || (!drawMode && zoom > 1) || e.button === 1) {
+      setIsPanning(true);
+      panStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      return;
+    }
+
     if (!drawMode || !widgets.showAnnotationTool) return;
     const pt = getCanvasCoords(e);
     setIsDrawing(true);
@@ -324,6 +363,14 @@ export function ExaminationDetailPage() {
   }
 
   function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (isPanning) {
+      setPan({
+        x: e.clientX - panStartRef.current.x,
+        y: e.clientY - panStartRef.current.y,
+      });
+      return;
+    }
+
     if (!drawMode || !isDrawing || !widgets.showAnnotationTool) return;
     const pt = getCanvasCoords(e);
     if (tool === "pen") {
@@ -342,11 +389,15 @@ export function ExaminationDetailPage() {
   }
 
   function handleMouseUp() {
+    if (isPanning) {
+      setIsPanning(false);
+      return;
+    }
+
     if (!drawMode || !isDrawing || !widgets.showAnnotationTool) return;
     setIsDrawing(false);
     if (tool !== "pen") shapeStartRef.current = null;
 
-    // A shape needs a real drag; freehand needs at least a couple of points.
     const meaningful = tool === "pen"
       ? currentPath.length > 1
       : currentPath.length > 1 && (() => {
@@ -362,12 +413,19 @@ export function ExaminationDetailPage() {
     else { setCurrentPath([]); redrawSaved(); }
   }
 
-  // Toggle a drawing tool: clicking the active tool turns drawing off; any other
-  // click selects that tool and enables drawing.
-  function handleToolClick(t: DrawTool) {
-    if (drawMode && tool === t) { setDrawMode(false); return; }
-    setTool(t);
-    setDrawMode(true);
+  function handleToolClick(t: ActiveTool) {
+    if (activeTool === t) {
+      setActiveTool(null);
+      setDrawMode(false);
+      return;
+    }
+    setActiveTool(t);
+    if (t === "pan") {
+      setDrawMode(false);
+    } else {
+      setTool(t);
+      setDrawMode(true);
+    }
   }
 
   async function handleSaveAnnotation(comment: string) {
@@ -380,7 +438,6 @@ export function ExaminationDetailPage() {
         comment,
         color: selectedColor,
       });
-      // if canvas was cleared, make the newly drawn annotation visible
       setVisibleAnnotationIds((prev) =>
         prev === null ? null : new Set([...prev, saved.id])
       );
@@ -397,24 +454,48 @@ export function ExaminationDetailPage() {
     setIsDrawing(false);
     setCurrentPath([]);
     setShowModal(false);
-    // redraw canvas with currently visible annotations (discard only the in-progress stroke)
-    const canvas = canvasRef.current!;
-    const ctx = canvas.getContext("2d")!;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const visibleManual = visibleAnnotationIds === null
-      ? manualAnnotations
-      : manualAnnotations.filter((a: Annotation) => visibleAnnotationIds.has(a.id));
-    const visible = showAI ? [...visibleManual, ...aiAnnotations] : visibleManual;
-    drawAnnotations(ctx, canvas.width, canvas.height, visible);
+    redrawSaved();
   }
 
-  function handleClearCanvas() {
+  // --- Deletion Functions ---
+  async function handleDeleteAnnotation(id: string) {
+    try {
+      await removeAnnotation(id);
+      void medicalDataService.logAuditEvent({ patientId: patientId, action: "ANNOTATION_DELETED" });
+      showToast("Annotation deleted", "info");
+    } catch {
+      showToast(t("annotations.deleteFailed") || "Delete failed", "error");
+    }
+  }
+
+  async function handleUndoAnnotation() {
+    const myAnnots = manualAnnotations.filter((a) => a.isOwner || userIsAdmin);
+    if (myAnnots.length === 0) return;
+    const last = myAnnots[myAnnots.length - 1];
+    try {
+      await removeAnnotation(last.id);
+      showToast("Last annotation removed", "info");
+    } catch {
+      showToast(t("annotations.deleteFailed") || "Delete failed", "error");
+    }
+  }
+
+  async function handleClearCanvas() {
     setIsDrawing(false);
     setCurrentPath([]);
-    setVisibleAnnotationIds(new Set()); // hide all from canvas, keep in sidebar
-    const canvas = canvasRef.current!;
-    const ctx = canvas.getContext("2d")!;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const myAnnots = manualAnnotations.filter((a) => a.isOwner || userIsAdmin);
+    if (myAnnots.length > 0) {
+      for (const ann of myAnnots) {
+        try {
+          await removeAnnotation(ann.id);
+        } catch (e) {
+          console.error("Failed to delete annotation:", ann.id, e);
+        }
+      }
+      showToast("Annotations cleared", "info");
+    }
+    setVisibleAnnotationIds(null);
+    redrawSaved();
   }
 
   function handleApplyAnnotation(id: string) {
@@ -435,15 +516,6 @@ export function ExaminationDetailPage() {
       URL.revokeObjectURL(blobUrl);
     } catch {
       window.open(url, "_blank");
-    }
-  }
-
-  async function handleDeleteAnnotation(id: string) {
-    try {
-      await removeAnnotation(id);
-      void medicalDataService.logAuditEvent({ patientId: patientId, action: "ANNOTATION_DELETED" });
-    } catch {
-      showToast(t("annotations.deleteFailed"), "error");
     }
   }
 
@@ -513,41 +585,107 @@ export function ExaminationDetailPage() {
     if (selectedSeriesIndex < imageSeries.length - 1) setSelectedSeries(imageSeries[selectedSeriesIndex + 1]);
   }
 
+  const deletableAnnots = manualAnnotations.filter((a) => a.isOwner || userIsAdmin);
+
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", position: "relative" }}>
 
-      {/* Column 1: TI-RADS Calculator */}
+      {/* Column 1: TI-RADS Calculator (Collapsible) */}
       {!isSmallScreen && widgets.showTiradsCalculator && (
-        <div style={{ width: 340, minWidth: 340, background: "var(--bg-surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div style={{ padding: "16px", borderBottom: "1px solid var(--border)" }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{t("nav.calculator") || "TI-RADS"}</div>
-          </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-            <TiradsCalculator examinationId={examId} />
-          </div>
-          <div style={{ padding: "12px", borderTop: "1px solid var(--border)" }}>
+        tiradsCollapsed ? (
+          <div
+            onClick={() => setTiradsCollapsed(false)}
+            title="Expand TI-RADS Calculator"
+            style={{
+              width: 44,
+              minWidth: 44,
+              background: "var(--bg-surface)",
+              borderRight: "1px solid var(--border)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              padding: "16px 0",
+              gap: 16,
+              cursor: "pointer",
+              transition: "all 0.2s",
+              zIndex: 10,
+            }}
+          >
             <button
-              onClick={() => {
-                localStorage.removeItem("thyroai_user");
-                window.location.href = "/login";
+              onClick={(e) => { e.stopPropagation(); setTiradsCollapsed(false); }}
+              style={{
+                background: "var(--bg-muted)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: 6,
+                cursor: "pointer",
+                color: "var(--accent-blue)",
+                display: "flex",
               }}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "10px", background: "var(--bg-muted)", border: "none", borderRadius: 8, cursor: "pointer", color: "var(--text-secondary)", fontSize: 13, fontWeight: 600, transition: "background 0.2s" }}
-              onMouseOver={(e) => e.currentTarget.style.background = "var(--bg-surface)"}
-              onMouseOut={(e) => e.currentTarget.style.background = "var(--bg-muted)"}
             >
-              <LogOut size={16} /> Çıxış
+              <ChevronRight size={16} />
             </button>
+            <div
+              style={{
+                writingMode: "vertical-rl",
+                transform: "rotate(180deg)",
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: "1px",
+                color: "var(--text-secondary)",
+                textTransform: "uppercase",
+              }}
+            >
+              TI-RADS Calculator
+            </div>
           </div>
-        </div>
+        ) : (
+          <div style={{ width: 340, minWidth: 340, background: "var(--bg-surface)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", overflow: "hidden", transition: "width 0.2s" }}>
+            <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{t("nav.calculator") || "TI-RADS"}</div>
+              <button
+                onClick={() => setTiradsCollapsed(true)}
+                title="Collapse TI-RADS panel"
+                style={{
+                  background: "var(--bg-muted)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: 4,
+                  cursor: "pointer",
+                  color: "var(--text-secondary)",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                <ChevronLeft size={16} />
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+              <TiradsCalculator examinationId={examId} />
+            </div>
+            <div style={{ padding: "12px", borderTop: "1px solid var(--border)" }}>
+              <button
+                onClick={() => {
+                  localStorage.removeItem("thyroai_user");
+                  window.location.href = "/login";
+                }}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", padding: "10px", background: "var(--bg-muted)", border: "none", borderRadius: 8, cursor: "pointer", color: "var(--text-secondary)", fontSize: 13, fontWeight: 600, transition: "background 0.2s" }}
+                onMouseOver={(e) => e.currentTarget.style.background = "var(--bg-surface)"}
+                onMouseOut={(e) => e.currentTarget.style.background = "var(--bg-muted)"}
+              >
+                <LogOut size={16} /> Çıxış
+              </button>
+            </div>
+          </div>
+        )
       )}
 
       {/* Column 2: Viewer + AI + Diagnosis */}
-      <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
 
-
-
+        {/* Toolbar */}
         {(widgets.showAnnotationTool || widgets.showAISuggestion || widgets.showTiradsCalculator) && (
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "10px 14px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 14px" }}>
             {widgets.showAnnotationTool && (
               <>
                 <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
@@ -556,9 +694,10 @@ export function ExaminationDetailPage() {
                     { id: "rect",    icon: <Square size={15} />,       label: "tool.rectangle" },
                     { id: "ellipse", icon: <Circle size={15} />,       label: "tool.ellipse" },
                     { id: "arrow",   icon: <ArrowUpRight size={15} />, label: "tool.arrow" },
-                  ] as { id: DrawTool; icon: React.ReactNode; label: string }[]).map((btn) => {
-                    const active = drawMode && tool === btn.id;
-                    const label = t(btn.label);
+                    { id: "pan",     icon: <Hand size={15} />,         label: "Pan / Move" },
+                  ] as { id: ActiveTool; icon: React.ReactNode; label: string }[]).map((btn) => {
+                    const active = (btn.id === "pan" ? activeTool === "pan" : (drawMode && tool === btn.id));
+                    const label = btn.label.startsWith("tool.") ? t(btn.label) : btn.label;
                     return (
                       <button
                         key={btn.id}
@@ -571,16 +710,61 @@ export function ExaminationDetailPage() {
                     );
                   })}
                 </div>
+
                 <div title={!drawMode ? t("tool.selectColour") : undefined} style={{ display: "flex", gap: 6, alignItems: "center", opacity: drawMode ? 1 : 0.35, transition: "opacity 0.2s", flexShrink: 0 }}>
                   {COLORS.map((c) => (
                     <button key={c} onClick={() => drawMode && setSelectedColor(c)} disabled={!drawMode} style={{ width: 20, height: 20, borderRadius: "50%", background: c, border: selectedColor === c ? "2px solid var(--accent-blue)" : "2px solid var(--border)", cursor: drawMode ? "pointer" : "not-allowed", padding: 0 }} />
                   ))}
                 </div>
-                <button onClick={handleClearCanvas} style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--bg-muted)", color: "var(--text-secondary)", border: "none", borderRadius: 10, padding: "6px 12px", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>
+
+                {/* Undo Button */}
+                <button
+                  onClick={() => void handleUndoAnnotation()}
+                  disabled={deletableAnnots.length === 0}
+                  title="Geri al (son qeydi sil)"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    background: "var(--bg-muted)",
+                    color: "var(--text-secondary)",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "6px 12px",
+                    cursor: deletableAnnots.length === 0 ? "not-allowed" : "pointer",
+                    fontSize: 12,
+                    opacity: deletableAnnots.length === 0 ? 0.35 : 1,
+                    flexShrink: 0,
+                  }}
+                >
+                  <Undo2 size={14} /> Geri al
+                </button>
+
+                {/* Clear Button */}
+                <button
+                  onClick={() => void handleClearCanvas()}
+                  disabled={deletableAnnots.length === 0}
+                  title="Bütün çəkilmiş qeydləri sil"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    background: "var(--bg-muted)",
+                    color: "var(--accent-danger)",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "6px 12px",
+                    cursor: deletableAnnots.length === 0 ? "not-allowed" : "pointer",
+                    fontSize: 12,
+                    opacity: deletableAnnots.length === 0 ? 0.35 : 1,
+                    flexShrink: 0,
+                  }}
+                >
                   <Eraser size={14} /> {t("common.clear")}
                 </button>
               </>
             )}
+
             {widgets.showAISuggestion && (
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                 <span style={{ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>{t("toolbar.showAI")}</span>
@@ -592,25 +776,209 @@ export function ExaminationDetailPage() {
           </div>
         )}
 
-        <div style={{ position: "relative", width: "100%", paddingBottom: "75%", background: "#000", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)", flexShrink: 0 }}>
-          {selectedSeries && (
-            <img
-              src={imageUrl(selectedSeries.fullUrl)}
-              alt="Ultrasound"
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-            />
-          )}
-          <canvas
-            ref={canvasRef}
-            width={800}
-            height={600}
-            onMouseDown={widgets.showAnnotationTool ? handleMouseDown : undefined}
-            onMouseMove={widgets.showAnnotationTool ? handleMouseMove : undefined}
-            onMouseUp={widgets.showAnnotationTool ? handleMouseUp : undefined}
-            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", cursor: widgets.showAnnotationTool && drawMode ? "crosshair" : "default" }}
-          />
+        {/* Interactive Annotation Chips right on top of image */}
+        {manualAnnotations.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>
+              Qeydlər ({manualAnnotations.length}):
+            </span>
+            {manualAnnotations.map((ann, idx) => (
+              <div
+                key={ann.id}
+                onMouseEnter={() => setHoveredAnnotationId(ann.id)}
+                onMouseLeave={() => setHoveredAnnotationId(null)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: hoveredAnnotationId === ann.id ? "var(--bg-hover)" : "var(--bg-muted)",
+                  border: `1.5px solid ${ann.color}`,
+                  borderRadius: 99,
+                  padding: "3px 10px",
+                  fontSize: 12,
+                  transition: "all 0.15s",
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: ann.color }} />
+                <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                  {ann.comment || `Qeyd #${idx + 1}`}
+                </span>
+                {(ann.isOwner || userIsAdmin) && (
+                  <button
+                    onClick={() => void handleDeleteAnnotation(ann.id)}
+                    title="Bu qeydi sil"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--accent-danger)",
+                      cursor: "pointer",
+                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      marginLeft: 4,
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
-          {/* Download button — small screens only (gallery column hidden) */}
+        {/* Main Image & Canvas Viewer */}
+        <div
+          onWheel={handleWheel}
+          style={{
+            position: "relative",
+            width: "100%",
+            paddingBottom: "75%",
+            background: "#000",
+            borderRadius: 8,
+            overflow: "hidden",
+            border: "1px solid var(--border)",
+            flexShrink: 0,
+          }}
+        >
+          {/* Zoomable & Pannable inner container */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+              transformOrigin: "center center",
+              transition: isPanning || isDrawing ? "none" : "transform 0.1s ease-out",
+            }}
+          >
+            {selectedSeries && (
+              <img
+                src={imageUrl(selectedSeries.fullUrl)}
+                alt="Ultrasound"
+                draggable={false}
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  display: "block",
+                  userSelect: "none",
+                }}
+              />
+            )}
+            <canvas
+              ref={canvasRef}
+              width={800}
+              height={600}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                cursor: activeTool === "pan"
+                  ? (isPanning ? "grabbing" : "grab")
+                  : drawMode
+                  ? "crosshair"
+                  : (zoom > 1 ? (isPanning ? "grabbing" : "grab") : "default"),
+              }}
+            />
+          </div>
+
+          {/* Floating Zoom & Pan Controls */}
+          <div
+            style={{
+              position: "absolute",
+              bottom: 12,
+              right: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
+              background: "rgba(20,24,33,0.85)",
+              backdropFilter: "blur(6px)",
+              border: "1px solid rgba(255,255,255,0.18)",
+              borderRadius: 8,
+              padding: "4px 6px",
+              zIndex: 15,
+              color: "#fff",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            }}
+          >
+            <button
+              onClick={handleZoomOut}
+              disabled={zoom <= 1}
+              title="Şəkli kiçilt (Zoom Out)"
+              style={{
+                background: "none",
+                border: "none",
+                color: zoom <= 1 ? "rgba(255,255,255,0.3)" : "#fff",
+                cursor: zoom <= 1 ? "default" : "pointer",
+                padding: "3px 4px",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <ZoomOut size={16} />
+            </button>
+            <button
+              onClick={handleResetZoom}
+              title="Normal ölçü (100%)"
+              style={{
+                background: "none",
+                border: "none",
+                color: "#fff",
+                cursor: "pointer",
+                padding: "2px 6px",
+                fontSize: 12,
+                fontWeight: 600,
+                fontFamily: "IBM Plex Mono, monospace",
+              }}
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={handleZoomIn}
+              disabled={zoom >= 4}
+              title="Şəkli böyüt (Zoom In)"
+              style={{
+                background: "none",
+                border: "none",
+                color: zoom >= 4 ? "rgba(255,255,255,0.3)" : "#fff",
+                cursor: zoom >= 4 ? "default" : "pointer",
+                padding: "3px 4px",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <ZoomIn size={16} />
+            </button>
+            {zoom > 1 && (
+              <button
+                onClick={handleResetZoom}
+                title="Sıfırla"
+                style={{
+                  background: "rgba(255,255,255,0.15)",
+                  border: "none",
+                  borderRadius: 4,
+                  color: "#fff",
+                  cursor: "pointer",
+                  padding: "3px 6px",
+                  fontSize: 11,
+                  marginLeft: 4,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 3,
+                }}
+              >
+                <RotateCcw size={12} /> Sıfırla
+              </button>
+            )}
+          </div>
+
+          {/* Download button */}
           {selectedSeries && (
             <button
               onClick={() => void downloadImage(imageUrl(selectedSeries.fullUrl), selectedSeries.label)}
@@ -651,6 +1019,7 @@ export function ExaminationDetailPage() {
           )}
         </div>
 
+        {/* AI Suggestion Card */}
         {widgets.showAISuggestion && showAI && aiScore && (
           <div className="soft-card" style={{ padding: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 14 }}>{t("ai.title")}</div>
@@ -743,16 +1112,20 @@ export function ExaminationDetailPage() {
 
           {metricHistory.length > 0 && (
             <div style={{ marginTop: 18, borderTop: "1px solid var(--border)", paddingTop: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>{t("measure.previous")}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {metricHistory.map((g) => (
-                  <div key={g.examinationId}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>{g.date ? formatDateDisplay(g.date) : "Unknown date"}</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {g.items.map((m) => (
-                        <span key={m.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--bg-muted)", border: "1px solid var(--border)", borderRadius: 10, padding: "4px 10px", fontSize: 12, fontFamily: "IBM Plex Mono, monospace" }}>
-                          <span style={{ fontWeight: 700, color: "var(--text-primary)" }}>{m.key}</span>
-                          <span style={{ color: "var(--text-secondary)" }}>{m.value}</span>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>
+                {t("measure.history")}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {metricHistory.map((h) => (
+                  <div key={h.examinationId} style={{ background: "var(--bg-muted)", borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>
+                      {formatDateDisplay(h.date)}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
+                      {h.items.map((m) => (
+                        <span key={m.id} style={{ fontSize: 12, fontFamily: "IBM Plex Mono, monospace" }}>
+                          <span style={{ color: "var(--text-secondary)" }}>{m.key}: </span>
+                          <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{m.value}</span>
                         </span>
                       ))}
                     </div>
@@ -763,6 +1136,7 @@ export function ExaminationDetailPage() {
           )}
         </div>
 
+        {/* Pathology Input */}
         {widgets.showPathologyInput && (
           <div className="soft-card" style={{ padding: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 16 }}>{t("diagnosis.title")}</div>
@@ -817,7 +1191,7 @@ export function ExaminationDetailPage() {
         )}
       </div>
 
-      {/* Column 3: Annotation List */}
+      {/* Column 3: Annotation List (Right Panel) */}
       {showAnnotationPanel && (
         <div style={{
           width: isSmallScreen ? "min(300px, 85%)" : annotationPanelWidth,
@@ -848,7 +1222,7 @@ export function ExaminationDetailPage() {
             )}
             {manualAnnotations.map((ann: Annotation) => {
               const isHidden = visibleAnnotationIds !== null && !visibleAnnotationIds.has(ann.id);
-              const canDelete = ann.isOwner;
+              const canDelete = ann.isOwner || userIsAdmin;
               return (
                 <div
                   key={ann.id}

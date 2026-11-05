@@ -71,7 +71,7 @@ public class AnnotationService {
 
         // Lock: if the examination this image belongs to has a confirmed diagnosis, deletion is blocked
         imageSeriesRepository.findById(annotation.getImageSeriesId()).ifPresent(series -> {
-            if (series.getExamination() != null && series.getExamination().getPathologyResult() != null)
+            if (series.getExamination() != null && series.getExamination().getPathologyResult() != null && series.getExamination().getPathologyResult().getConfirmedAt() != null)
                 throw new IllegalStateException("Cannot delete annotation after diagnosis has been submitted.");
         });
 

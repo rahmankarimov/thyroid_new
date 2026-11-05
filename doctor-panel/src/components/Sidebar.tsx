@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Settings, LogOut, Sun, Moon, UserRound, Shield } from "lucide-react";
+import { Settings, LogOut, Sun, Moon, UserRound, Shield, ChevronLeft, Menu } from "lucide-react";
 import { useTheme } from "../hooks/useTheme";
 import { api } from "../services/api";
 import { useT } from "../i18n";
@@ -35,6 +35,18 @@ export function Sidebar() {
   const initials = (user.name ?? "").trim().split(/\s+/).map((w: string) => w[0]).slice(0, 2).join("").toUpperCase() || "D";
   const [hospitalName, setHospitalName] = useState("ThyroAI");
 
+  const [collapsed, setCollapsed] = useState(() => {
+    return localStorage.getItem("thyroai_sidebar_collapsed") === "true";
+  });
+
+  function toggleCollapse() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      localStorage.setItem("thyroai_sidebar_collapsed", String(next));
+      return next;
+    });
+  }
+
   useEffect(() => {
     api.get<{ name: string }>("/hospitals/mine")
       .then((h) => setHospitalName(h.name))
@@ -47,121 +59,171 @@ export function Sidebar() {
   }
 
   return (
-    <aside
-      className="sidebar"
-      style={{
-        background: "var(--bg-surface)",
-        borderRight: "1px solid var(--border)",
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        
-        
-        
-        zIndex: 100,
-      }}
-    >
-      <div className="sidebar-header" style={{ padding: "22px 18px 18px", display: "flex", alignItems: "center", gap: 11 }}>
-        <BrandMark />
-        <span
-          className="sidebar-logo-text"
-          title={hospitalName}
+    <>
+      {collapsed && (
+        <button
+          onClick={toggleCollapse}
+          title="Open sidebar"
           style={{
-            flex: 1,
-            minWidth: 0,
-            fontFamily: "Manrope, system-ui, sans-serif",
-            fontWeight: 700,
-            fontSize: 16,
-            lineHeight: 1.25,
+            position: "fixed",
+            top: 14,
+            left: 14,
+            zIndex: 1000,
+            background: "var(--bg-surface)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: "8px 12px",
+            cursor: "pointer",
             color: "var(--text-primary)",
-            letterSpacing: "-0.3px",
-            display: "-webkit-box",
-            WebkitBoxOrient: "vertical",
-            WebkitLineClamp: 2,
-            overflow: "hidden",
-            wordBreak: "break-word",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            boxShadow: "0 4px 14px rgba(0,0,0,0.18)",
+            transition: "all 0.2s",
+            fontSize: 12,
+            fontWeight: 600,
           }}
         >
-          {hospitalName}
-        </span>
-      </div>
+          <Menu size={16} color="var(--accent-blue)" />
+          <span>Menu</span>
+        </button>
+      )}
 
-      <nav style={{ flex: 1, padding: "10px 0" }}>
-        {[
-          ...(user?.role === "admin" || user?.role === "super_admin" ? [] : BASE_NAV), ...(user?.role === "admin" || user?.role === "super_admin" ? [ADMIN_NAV] : []), 
-          SETTINGS_NAV,
-        ].map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            style={({ isActive }) => ({
-              display: "flex",
-              alignItems: "center",
-              gap: 11,
-              margin: "3px 12px",
-              padding: "8px 10px",
-              borderRadius: 12,
-              textDecoration: "none",
-              fontSize: 14,
-              fontWeight: isActive ? 600 : 500,
-              color: isActive ? "var(--accent-blue)" : "var(--text-secondary)",
-              ...(isActive ? { background: "var(--accent-blue-light)" } : {}),
-              transition: "all 0.15s",
-            })}
-          >
-            {({ isActive }) => (
-              <>
-                <span style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 32, height: 32, borderRadius: 10, flexShrink: 0,
-                  background: isActive ? "var(--bg-surface)" : "var(--bg-muted)",
-                  color: isActive ? "var(--accent-blue)" : "var(--text-secondary)",
-                  boxShadow: isActive ? "var(--shadow-xs)" : "none",
-                  transition: "all 0.15s",
-                }}>{item.icon}</span>
-                <span className="sidebar-label">{t(item.label)}</span>
-              </>
-            )}
-          </NavLink>
-        ))}
-      </nav>
-
-      <div
-        className="sidebar-footer"
+      <aside
+        className={`sidebar ${collapsed ? "collapsed" : ""}`}
         style={{
-          padding: "16px 20px",
-          borderTop: "1px solid var(--hairline)",
+          background: "var(--bg-surface)",
+          borderRight: "1px solid var(--border)",
           display: "flex",
           flexDirection: "column",
-          gap: 10,
+          height: "100vh",
+          zIndex: 100,
+          position: "relative",
         }}
       >
-        <div className="sidebar-footer-text" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "var(--bg-muted)", border: "1px solid var(--hairline)", borderRadius: 12 }}>
-          <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: "50%", flexShrink: 0, background: "var(--accent-blue-light)", color: "var(--accent-blue)", fontSize: 12, fontWeight: 700, letterSpacing: "0.3px" }}>{initials}</span>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div title={user.name} style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.name}</div>
-            <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>{t("sidebar.role")}</div>
+        <div className="sidebar-header" style={{ padding: "18px 14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+            <BrandMark />
+            <span
+              className="sidebar-logo-text"
+              title={hospitalName}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontFamily: "Manrope, system-ui, sans-serif",
+                fontWeight: 700,
+                fontSize: 16,
+                lineHeight: 1.25,
+                color: "var(--text-primary)",
+                letterSpacing: "-0.3px",
+                display: "-webkit-box",
+                WebkitBoxOrient: "vertical",
+                WebkitLineClamp: 2,
+                overflow: "hidden",
+                wordBreak: "break-word",
+              }}
+            >
+              {hospitalName}
+            </span>
+          </div>
+          <button
+            onClick={toggleCollapse}
+            title="Collapse sidebar"
+            style={{
+              background: "var(--bg-muted)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: "6px",
+              cursor: "pointer",
+              color: "var(--text-secondary)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              transition: "all 0.15s",
+            }}
+          >
+            <ChevronLeft size={16} />
+          </button>
+        </div>
+
+        <nav style={{ flex: 1, padding: "10px 0" }}>
+          {[
+            ...(user?.role === "admin" || user?.role === "super_admin" ? [] : BASE_NAV), ...(user?.role === "admin" || user?.role === "super_admin" ? [ADMIN_NAV] : []), 
+            SETTINGS_NAV,
+          ].map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              style={({ isActive }) => ({
+                display: "flex",
+                alignItems: "center",
+                gap: 11,
+                margin: "3px 12px",
+                padding: "8px 10px",
+                borderRadius: 12,
+                textDecoration: "none",
+                fontSize: 14,
+                fontWeight: isActive ? 600 : 500,
+                color: isActive ? "var(--accent-blue)" : "var(--text-secondary)",
+                ...(isActive ? { background: "var(--accent-blue-light)" } : {}),
+                transition: "all 0.15s",
+              })}
+            >
+              {({ isActive }) => (
+                <>
+                  <span style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+                    background: isActive ? "var(--bg-surface)" : "var(--bg-muted)",
+                    color: isActive ? "var(--accent-blue)" : "var(--text-secondary)",
+                    boxShadow: isActive ? "var(--shadow-xs)" : "none",
+                    transition: "all 0.15s",
+                  }}>{item.icon}</span>
+                  <span className="sidebar-label">{t(item.label)}</span>
+                </>
+              )}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div
+          className="sidebar-footer"
+          style={{
+            padding: "16px 20px",
+            borderTop: "1px solid var(--hairline)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <div className="sidebar-footer-text" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "var(--bg-muted)", border: "1px solid var(--hairline)", borderRadius: 12 }}>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, borderRadius: "50%", flexShrink: 0, background: "var(--accent-blue-light)", color: "var(--accent-blue)", fontSize: 12, fontWeight: 700, letterSpacing: "0.3px" }}>{initials}</span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div title={user.name} style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.name}</div>
+              <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>{t("sidebar.role")}</div>
+            </div>
+          </div>
+          <LanguageSwitcher />
+          <div className="sidebar-footer-buttons" style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={toggle}
+              title={theme === "dark" ? t("sidebar.toLight") : t("sidebar.toDark")}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-muted)", border: "1px solid var(--border)", borderRadius: 10, padding: "7px 10px", cursor: "pointer", color: "var(--text-secondary)" }}
+            >
+              {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
+            <button
+              onClick={logout}
+              title={t("sidebar.logout")}
+              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "none", border: "1px solid var(--border)", borderRadius: 10, padding: "7px 12px", cursor: "pointer", fontSize: 13, color: "var(--text-secondary)" }}
+            >
+              <LogOut size={14} />
+              <span className="sidebar-label">{t("sidebar.logout")}</span>
+            </button>
           </div>
         </div>
-        <LanguageSwitcher />
-        <div className="sidebar-footer-buttons" style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={toggle}
-            title={theme === "dark" ? t("sidebar.toLight") : t("sidebar.toDark")}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-muted)", border: "1px solid var(--border)", borderRadius: 10, padding: "7px 10px", cursor: "pointer", color: "var(--text-secondary)" }}
-          >
-            {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
-          </button>
-          <button
-            onClick={logout}
-            title={t("sidebar.logout")}
-            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "none", border: "1px solid var(--border)", borderRadius: 10, padding: "7px 12px", cursor: "pointer", fontSize: 13, color: "var(--text-secondary)" }}
-          >
-            <LogOut size={14} />
-            <span className="sidebar-label">{t("sidebar.logout")}</span>
-          </button>
-        </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }
