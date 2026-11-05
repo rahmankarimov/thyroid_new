@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useContext, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import {
   Pen, Eraser, ChevronLeft, ChevronRight, Trash2, Download, Plus, X, Lock,
   Square, Circle, ArrowUpRight, LogOut, ZoomIn, ZoomOut, RotateCcw, Hand, Undo2
