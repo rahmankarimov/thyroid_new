@@ -1,102 +1,110 @@
+import type { Annotation, ExaminationMetric, Patient, PathologyResult } from "../types/medical";
 import { api } from "./api";
-import type { Patient, ExaminationMetric, PathologyResult, AuditEvent } from "../data/mockData";
+
+interface PagedResult<T> {
+  content: T[];
+  totalElements: number;
+  totalPages: number;
+  page: number;
+  size: number;
+  last: boolean;
+}
+
+interface RawAnnotation {
+  id: string;
+  imageSeriesId: string;
+  patientId: string;
+  doctorId: string;
+  doctorName: string;
+  path: string;
+  comment: string;
+  color: string;
+  shared: boolean;
+  isOwner: boolean;
+  createdAt: string;
+}
+
+function parseAnnotation(raw: RawAnnotation): Annotation {
+  return {
+    ...raw,
+    path: JSON.parse(raw.path) as Array<{ x: number; y: number }>,
+  };
+}
 
 export const medicalDataService = {
   getPatients(): Promise<Patient[]> {
-    return api.get<Patient[]>("/patients");
+    return api
+      .get<PagedResult<Patient>>("/patients?size=100")
+      .then((r) => r.content);
   },
 
   getPatient(id: string): Promise<Patient> {
     return api.get<Patient>(`/patients/${id}`);
   },
 
-  updatePatient(id: string, updates: Partial<Patient>): Promise<Patient> {
-    return api.put<Patient>(`/patients/${id}`, updates);
+  getAnnotations(imageSeriesId: string): Promise<Annotation[]> {
+    return api
+      .get<RawAnnotation[]>(`/annotations/image/${imageSeriesId}`)
+      .then((items) => items.map(parseAnnotation));
   },
 
-  deletePatient(id: string): Promise<void> {
-    return api.del<void>(`/patients/${id}`);
-  },
-
-  createPatient(patient: {
-    fullName: string;
-    nationalId: string;
-    birthDate: string;
-    gender: "male" | "female" | "other";
-    phone?: string;
-  }): Promise<Patient> {
-    return api.post<Patient>("/patients", patient);
-  },
-
-  createExamination(exam: {
+  saveAnnotation(req: {
+    imageSeriesId: string;
     patientId: string;
-    description?: string;
-    notes?: string;
-  }): Promise<{ id: string; patientId: string; status: string; createdAt: string }> {
-    return api.post("/examinations", exam);
+    path: Array<{ x: number; y: number }>;
+    comment: string;
+    color: string;
+  }): Promise<Annotation> {
+    return api
+      .post<RawAnnotation>("/annotations", {
+        imageSeriesId: req.imageSeriesId,
+        patientId: req.patientId,
+        path: JSON.stringify(req.path),
+        comment: req.comment,
+        color: req.color,
+      })
+      .then(parseAnnotation);
   },
 
-  deleteExamination(id: string): Promise<void> {
-    return api.del<void>(`/examinations/${id}`);
+  deleteAnnotation(id: string): Promise<void> {
+    return api.del<void>(`/annotations/${id}`);
   },
 
-  deleteSeries(id: string): Promise<void> {
-    return api.del<void>(`/image-series/${id}`);
+  setAnnotationShared(id: string, shared: boolean): Promise<Annotation> {
+    return api.patch<RawAnnotation>(`/annotations/${id}/shared`, { shared }).then(parseAnnotation);
   },
 
-  uploadImage(formData: FormData): Promise<{ id: string; examinationId: string; dicomInstanceUid?: string; localThumbnailPath?: string; sliceCount: number }> {
-    const raw = localStorage.getItem("thyroai_user");
-    const token = raw ? (JSON.parse(raw) as { token?: string }).token ?? null : null;
-    const base = (import.meta.env.VITE_API_BASE as string | undefined) ?? "http://localhost:8080/api/v1";
-
-    return fetch(`${base}/image-series/upload`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: formData,
-    }).then(async (res) => {
-      if (!res.ok) {
-        let msg = `Upload failed (${res.status})`;
-        try {
-          const body = await res.json() as { error?: string };
-          if (body.error) msg = body.error;
-        } catch { /* use default */ }
-        throw new Error(msg);
-      }
-      const json = await res.json() as { data: { id: string; examinationId: string; dicomInstanceUid?: string; localThumbnailPath?: string; sliceCount: number } };
-      return json.data;
-    });
+  getExaminationMetrics(examinationId: string): Promise<ExaminationMetric[]> {
+    return api.get<ExaminationMetric[]>(`/examination-metrics/examination/${examinationId}`);
   },
 
-  saveMetrics(metrics: {
+  getPatientMetrics(patientId: string): Promise<ExaminationMetric[]> {
+    return api.get<ExaminationMetric[]>(`/examination-metrics/patient/${patientId}`);
+  },
+
+  addExaminationMetric(req: {
     examinationId: string;
-    leftLobeVolume?: number;
-    rightLobeVolume?: number;
-    isthmusThickness?: number;
-    totalVolume?: number;
-    notes?: string;
+    key: string;
+    value: string;
   }): Promise<ExaminationMetric> {
-    return api.post<ExaminationMetric>("/examination-metrics", metrics);
+    return api.post<ExaminationMetric>("/examination-metrics", req);
   },
 
-  deleteMetrics(id: string): Promise<void> {
+  deleteExaminationMetric(id: string): Promise<void> {
     return api.del<void>(`/examination-metrics/${id}`);
   },
 
-  savePathologyResult(result: {
+  savePathologyResult(req: {
     examinationId: string;
     diagnosis: string;
-    notes?: string;
+    notes: string;
   }): Promise<PathologyResult> {
-    return api.post<PathologyResult>("/pathology-results", result);
-  },
-
-  confirmPathologyResult(id: string): Promise<PathologyResult> {
-    return api.post<PathologyResult>(`/pathology-results/${id}/confirm`);
+    return api.post<PathologyResult>("/pathology", req);
   },
 
   logAuditEvent(event: {
-    patientId: string;
-    action: AuditEvent["action"];
+    patientId?: string;
+    action: string;
     details?: string;
   }): Promise<void> {
     return api.post<void>("/audit-logs", event).catch(() => {});
@@ -115,10 +123,6 @@ export const medicalDataService = {
     margin?: string;
     echogenicFoci?: string;
   }): Promise<any> {
-    return api.post(`/examinations/${examinationId}/tirads`, result);
-  },
-
-  getTiradsResults(examinationId: string): Promise<any[]> {
-    return api.get<any[]>(`/examinations/${examinationId}/tirads`);
+    return api.post<any>(`/examinations/${examinationId}/tirads`, result);
   },
 };

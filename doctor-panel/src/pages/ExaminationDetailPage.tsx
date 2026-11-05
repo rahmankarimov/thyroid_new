@@ -111,7 +111,7 @@ export function ExaminationDetailPage() {
       .getPatient(patientId)
       .then((p) => {
         setPatient(p);
-        const target = p.examinations.find((e) => e.id === examId) ?? p.examinations[0];
+        const target = p.examinations?.find((e: any) => e.id === examId) ?? p.examinations?.[0];
         if (target) {
           setSelectedExamId(target.id);
           const first = target.imageSeries?.[0] ?? null;
