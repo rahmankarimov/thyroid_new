@@ -26,6 +26,14 @@ public class TiradsResultService {
 
     @Transactional
     public TiradsResultDTO create(UUID examinationId, CreateTiradsResultRequest request) {
+        if (request.getComposition() == null || request.getComposition().isBlank()
+                || request.getEchogenicity() == null || request.getEchogenicity().isBlank()
+                || request.getShape() == null || request.getShape().isBlank()
+                || request.getMargin() == null || request.getMargin().isBlank()
+                || request.getEchogenicFoci() == null || request.getEchogenicFoci().isBlank()) {
+            throw new IllegalArgumentException("Bütün 5 TI-RADS kateqoriyası (composition, echogenicity, shape, margin, echogenic foci) mütləq seçilməlidir.");
+        }
+
         Examination exam = examinationRepository.findById(examinationId)
                 .orElseThrow(() -> new IllegalArgumentException("Examination not found"));
 

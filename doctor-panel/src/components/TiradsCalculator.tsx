@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
-import { RotateCcw, X } from "lucide-react";
+import { RotateCcw, X, Check, AlertCircle } from "lucide-react";
 import { TIRADS_CATEGORIES, classifyTirads } from "../data/tirads";
 import type { TiradsCategory, TiradsLevel } from "../data/tirads";
 import { useT } from "../i18n";
 import { medicalDataService } from "../services/medicalDataService";
+import { ToastContext } from "../App";
 
 // TR level → translation keys (label text is localized; the TRn code stays as-is).
 const LEVEL_LABEL_KEY: Record<string, string> = {
@@ -55,11 +56,20 @@ function pointsBadge(points: number, additive: boolean, selected: boolean) {
 export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => void; examinationId?: string } = {}) {
   const t = useT();
   const navigate = useNavigate();
+  const showToast = useContext(ToastContext);
+
   // Single-choice categories store one option id; the additive category stores a set.
   const [single, setSingle] = useState<Record<string, string>>({});
   const [foci, setFoci] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+
+  // Reset when examination changes
+  useEffect(() => {
+    setSingle({});
+    setFoci([]);
+    setSubmitted(false);
+  }, [examinationId]);
 
   function selectSingle(catKey: string, optId: string) {
     setSingle((prev) => (prev[catKey] === optId ? (() => { const n = { ...prev }; delete n[catKey]; return n; })() : { ...prev, [catKey]: optId }));
@@ -74,6 +84,19 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
       return [...prev.filter((id) => id !== noneId), optId];
     });
   }
+
+  function isCategorySelected(cat: TiradsCategory): boolean {
+    if (cat.additive) {
+      return foci.length > 0;
+    }
+    return Boolean(single[cat.key]);
+  }
+
+  const selectedCount = useMemo(() => {
+    return TIRADS_CATEGORIES.filter(isCategorySelected).length;
+  }, [single, foci]);
+
+  const allCategoriesSelected = selectedCount === TIRADS_CATEGORIES.length;
 
   const total = useMemo(() => {
     let sum = 0;
@@ -98,7 +121,7 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
   }
 
   async function handleSubmit() {
-    if (!examinationId) return;
+    if (!examinationId || !allCategoriesSelected) return;
     setIsSubmitting(true);
     try {
       const payload = {
@@ -108,10 +131,11 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
         echogenicity: TIRADS_CATEGORIES.find(c => c.key === "echogenicity")?.options.find(o => o.id === single["echogenicity"])?.label,
         shape: TIRADS_CATEGORIES.find(c => c.key === "shape")?.options.find(o => o.id === single["shape"])?.label,
         margin: TIRADS_CATEGORIES.find(c => c.key === "margin")?.options.find(o => o.id === single["margin"])?.label,
-        echogenicFoci: foci.map(f => TIRADS_CATEGORIES.find(c => c.key === "echogenicFoci")?.options.find(o => o.id === f)?.label).filter(Boolean).join(", ")
+        echogenicFoci: foci.map(f => TIRADS_CATEGORIES.find(c => c.key === "foci")?.options.find(o => o.id === f)?.label).filter(Boolean).join(", ")
       };
       await medicalDataService.saveTiradsResult(examinationId, payload);
       setSubmitted(true);
+      showToast?.("TI-RADS qiymətləndirməsi uğurla yadda saxlanıldı", "success");
       
       // Auto-advance to next random image
       try {
@@ -125,8 +149,10 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
       } catch (err) {
         console.error("No more images left to rate!");
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      const msg = err?.response?.data?.message || err?.message || "Xəta baş verdi";
+      showToast?.(msg, "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -164,11 +190,47 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
         {TIRADS_CATEGORIES.map((cat) => {
           const selectedIds = cat.additive ? foci : (single[cat.key] ? [single[cat.key]] : []);
           const descriptions = cat.options.filter((o) => selectedIds.includes(o.id) && o.description);
+          const isComplete = isCategorySelected(cat);
+
           return (
             <div key={cat.key}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{t(`tirads.cat.${cat.key}`)}</span>
-                {cat.additive && <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{t("tirads.selectAll")}</span>}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    {t(`tirads.cat.${cat.key}`)}
+                  </span>
+                  {cat.additive && <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{t("tirads.selectAll")}</span>}
+                </div>
+
+                {isComplete ? (
+                  <span style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "var(--accent-success)",
+                    background: "rgba(63, 157, 110, 0.12)",
+                    padding: "2px 8px",
+                    borderRadius: 999
+                  }}>
+                    <Check size={11} strokeWidth={3} /> Seçildi
+                  </span>
+                ) : (
+                  <span style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 3,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "var(--accent-danger)",
+                    background: "rgba(229, 96, 94, 0.12)",
+                    padding: "2px 8px",
+                    borderRadius: 999
+                  }}>
+                    * Seçilməyib
+                  </span>
+                )}
               </div>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -234,26 +296,63 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
       </div>
 
       {examinationId && (
-        <button
-          onClick={handleSubmit}
-          disabled={isSubmitting || submitted}
-          style={{
-            marginTop: 16,
-            width: "100%",
-            padding: "12px",
-            background: submitted ? "var(--accent-success)" : "var(--accent-blue)",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            fontSize: 14,
-            fontWeight: 700,
-            cursor: (isSubmitting || submitted) ? "not-allowed" : "pointer",
-            opacity: isSubmitting ? 0.7 : 1,
-            transition: "all 0.2s"
-          }}
-        >
-          {isSubmitting ? t("common.saving") || "Yadda saxlanılır..." : submitted ? t("common.saved") || "Yadda saxlanıldı" : "Təsdiqlə"}
-        </button>
+        <div style={{ marginTop: 16 }}>
+          {!allCategoriesSelected && (
+            <div style={{
+              marginBottom: 10,
+              fontSize: 12,
+              color: "var(--accent-warning)",
+              background: "rgba(201, 138, 43, 0.1)",
+              border: "1px solid var(--accent-warning)",
+              borderRadius: 8,
+              padding: "9px 12px",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              lineHeight: 1.4
+            }}>
+              <AlertCircle size={15} style={{ flexShrink: 0 }} />
+              <span>
+                Təsdiqləmək üçün bütün 5 kateqoriya seçilməlidir (<strong>{selectedCount}/5</strong> seçilib).
+              </span>
+            </div>
+          )}
+
+          <button
+            onClick={handleSubmit}
+            disabled={!allCategoriesSelected || isSubmitting || submitted}
+            style={{
+              width: "100%",
+              padding: "12px",
+              background: submitted
+                ? "var(--accent-success)"
+                : allCategoriesSelected
+                  ? "var(--accent-blue)"
+                  : "var(--bg-muted)",
+              color: submitted || allCategoriesSelected ? "#fff" : "var(--text-secondary)",
+              border: allCategoriesSelected ? "none" : "1px solid var(--border)",
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: (!allCategoriesSelected || isSubmitting || submitted) ? "not-allowed" : "pointer",
+              opacity: (!allCategoriesSelected || isSubmitting) ? 0.75 : 1,
+              transition: "all 0.2s",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              boxShadow: allCategoriesSelected && !submitted ? "0 2px 8px rgba(79, 107, 237, 0.25)" : "none",
+            }}
+          >
+            {isSubmitting
+              ? (t("common.saving") || "Yadda saxlanılır...")
+              : submitted
+                ? (t("common.saved") || "Yadda saxlanıldı")
+                : allCategoriesSelected
+                  ? "Təsdiqlə"
+                  : `Təsdiqlə (${selectedCount}/5 seçilib)`}
+          </button>
+        </div>
       )}
     </div>
   );
