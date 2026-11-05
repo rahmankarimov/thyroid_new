@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
-import { RotateCcw, X, Check, AlertCircle } from "lucide-react";
+import { RotateCcw, X, Check, AlertCircle, ArrowRight } from "lucide-react";
 import { TIRADS_CATEGORIES, classifyTirads } from "../data/tirads";
 import type { TiradsCategory, TiradsLevel } from "../data/tirads";
 import { useT } from "../i18n";
@@ -120,6 +120,23 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
     setFoci([]);
   }
 
+  async function advanceToNextImage() {
+    try {
+      const data = await medicalDataService.getNextRandomExaminationId();
+      if (data && data.patientId && data.examId) {
+        setSingle({});
+        setFoci([]);
+        setSubmitted(false);
+        navigate(`/patients/${data.patientId}/examinations/${data.examId}`);
+      } else {
+        showToast?.("Növbədə yeni təsdiqlənməmiş müayinə tapılmadı.", "info");
+      }
+    } catch (err: any) {
+      console.error("Queue fetch error:", err);
+      showToast?.(err?.message || "Növbədə yeni şəkil tapılmadı.", "info");
+    }
+  }
+
   async function handleSubmit() {
     if (!examinationId || !allCategoriesSelected) return;
     setIsSubmitting(true);
@@ -137,18 +154,8 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
       setSubmitted(true);
       showToast?.("TI-RADS qiymətləndirməsi uğurla yadda saxlanıldı", "success");
       
-      // Auto-advance to next random image
-      try {
-        const data = await medicalDataService.getNextRandomExaminationId();
-        navigate(`/patients/${data.patientId}/examinations/${data.examId}`, { replace: true });
-        
-        // Reset local calculator state for the new image
-        setSingle({});
-        setFoci([]);
-        setSubmitted(false);
-      } catch (err) {
-        console.error("No more images left to rate!");
-      }
+      // Auto-advance to next random examination
+      await advanceToNextImage();
     } catch (err: any) {
       console.error(err);
       const msg = err?.response?.data?.message || err?.message || "Xəta baş verdi";
@@ -296,10 +303,9 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
       </div>
 
       {examinationId && (
-        <div style={{ marginTop: 16 }}>
-          {!allCategoriesSelected && (
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+          {!allCategoriesSelected && !submitted && (
             <div style={{
-              marginBottom: 10,
               fontSize: 12,
               color: "var(--accent-warning)",
               background: "rgba(201, 138, 43, 0.1)",
@@ -345,13 +351,38 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
             }}
           >
             {isSubmitting
-              ? (t("common.saving") || "Yadda saxlanılır...")
+              ? "Yadda saxlanılır..."
               : submitted
-                ? (t("common.saved") || "Yadda saxlanıldı")
+                ? "Yadda saxlanıldı ✓"
                 : allCategoriesSelected
                   ? "Təsdiqlə"
                   : `Təsdiqlə (${selectedCount}/5 seçilib)`}
           </button>
+
+          {submitted && (
+            <button
+              onClick={advanceToNextImage}
+              style={{
+                width: "100%",
+                padding: "11px",
+                background: "var(--accent-blue)",
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                transition: "background 0.15s",
+              }}
+            >
+              <span>Növbəti müayinəyə keç</span>
+              <ArrowRight size={15} />
+            </button>
+          )}
         </div>
       )}
     </div>

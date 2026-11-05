@@ -48,6 +48,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   const json = await res.json();
+  if (json && json.success === false) {
+    throw new Error(json.error || "Request failed");
+  }
   return json.data as T;
 }
 

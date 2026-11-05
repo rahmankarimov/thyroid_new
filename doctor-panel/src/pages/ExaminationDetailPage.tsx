@@ -106,6 +106,7 @@ export function ExaminationDetailPage() {
 
   useEffect(() => {
     if (!patientId) return;
+    setLoading(true);
     medicalDataService
       .getPatient(patientId)
       .then((p) => {
