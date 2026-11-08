@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useContext, useMemo } from "r
 import { useParams } from "react-router-dom";
 import {
   Pen, Eraser, ChevronLeft, ChevronRight, Trash2, Download, Plus, X, Lock,
-  Square, Circle, ArrowUpRight, LogOut, ZoomIn, ZoomOut, RotateCcw, Hand, Undo2
+  Square, Circle, ArrowUpRight, LogOut, ZoomIn, ZoomOut, RotateCcw, Hand, Undo2, Maximize2, Minimize2
 } from "lucide-react";
 import { medicalDataService } from "../services/medicalDataService";
 import { imageUrl } from "../services/api";
@@ -97,6 +97,65 @@ export function ExaminationDetailPage() {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Fullscreen state
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const viewerRef = useRef<HTMLDivElement | null>(null);
+
+  // Esc key exits fullscreen
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isFullscreen]);
+
+  // Smooth touchpad pinch-to-zoom and two-finger pan
+  useEffect(() => {
+    const el = viewerRef.current;
+    if (!el) return;
+
+    function handleNativeWheel(e: WheelEvent) {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const factor = Math.exp(-e.deltaY * 0.005);
+        setZoom((prev) => {
+          const next = Math.min(Math.max(+(prev * factor).toFixed(2), 1), 4);
+          if (next <= 1.01) setPan({ x: 0, y: 0 });
+          return next;
+        });
+        return;
+      }
+
+      setZoom((currentZoom) => {
+        if (currentZoom > 1) {
+          e.preventDefault();
+          setPan((p) => ({
+            x: p.x - e.deltaX * 1.1,
+            y: p.y - e.deltaY * 1.1,
+          }));
+        }
+        return currentZoom;
+      });
+    }
+
+    el.addEventListener("wheel", handleNativeWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleNativeWheel);
+  }, []);
+
+  function handleDoubleClick() {
+    setZoom((prev) => {
+      if (prev > 1.1) {
+        setPan({ x: 0, y: 0 });
+        return 1;
+      } else {
+        return 2;
+      }
+    });
+  }
 
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(true);
@@ -233,7 +292,7 @@ export function ExaminationDetailPage() {
               ctx.setLineDash([]);
               ctx.fillStyle = ann.color || "#ef4444";
               ctx.font = "bold 13px sans-serif";
-              ctx.fillText("AI Suggestion", x, y > 15 ? y - 6 : y + h + 16);
+              ctx.fillText("Bounding Box", x, y > 15 ? y - 6 : y + h + 16);
             }
           }
           return;
@@ -774,6 +833,32 @@ export function ExaminationDetailPage() {
                 </div>
               </div>
             )}
+
+            <button
+              onClick={() => setIsFullscreen(true)}
+              title="Tam ekran rejimi (Full Screen)"
+              style={{
+                marginLeft: widgets.showAISuggestion ? 8 : "auto",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                background: "var(--bg-muted)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "6px 10px",
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--text-primary)",
+                cursor: "pointer",
+                flexShrink: 0,
+                transition: "all 0.15s",
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.borderColor = "var(--accent-blue)")}
+              onMouseOut={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+            >
+              <Maximize2 size={14} color="var(--accent-blue)" />
+              <span>Tam ekran</span>
+            </button>
           </div>
         )}
 
@@ -827,139 +912,366 @@ export function ExaminationDetailPage() {
           </div>
         )}
 
-        {/* Main Image & Canvas Viewer */}
+        {/* Main Image & Canvas Viewer (Supports Fullscreen & Touchpad Smooth Zoom) */}
         <div
-          onWheel={handleWheel}
-          style={{
-            position: "relative",
-            width: "100%",
-            paddingBottom: "75%",
-            background: "#000",
-            borderRadius: 8,
-            overflow: "hidden",
-            border: "1px solid var(--border)",
-            flexShrink: 0,
-          }}
+          ref={viewerRef}
+          style={
+            isFullscreen
+              ? {
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 99999,
+                  background: "#07080c",
+                  width: "100vw",
+                  height: "100vh",
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }
+              : {
+                  position: "relative",
+                  width: "100%",
+                  paddingBottom: "75%",
+                  background: "#000",
+                  borderRadius: 8,
+                  overflow: "hidden",
+                  border: "1px solid var(--border)",
+                  flexShrink: 0,
+                }
+          }
         >
-          {/* Zoomable & Pannable inner container */}
+          {/* Fullscreen Top Control Bar */}
+          {isFullscreen && (
+            <div
+              style={{
+                height: 52,
+                background: "rgba(18,22,30,0.95)",
+                borderBottom: "1px solid rgba(255,255,255,0.12)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "0 20px",
+                zIndex: 20,
+                flexShrink: 0,
+                color: "#fff",
+              }}
+            >
+              {/* Left: Patient & Series info */}
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+                  {patient?.name || "Xəstə"}
+                </span>
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>•</span>
+                <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontFamily: "IBM Plex Mono, monospace" }}>
+                  Şəkil {selectedSeriesIndex + 1} / {imageSeries.length}
+                </span>
+                {imageSeries.length > 1 && (
+                  <div style={{ display: "flex", gap: 4, marginLeft: 6 }}>
+                    <button
+                      onClick={handlePrevSeries}
+                      disabled={selectedSeriesIndex <= 0}
+                      title="Əvvəlki şəkil"
+                      style={{
+                        background: "rgba(255,255,255,0.1)",
+                        border: "none",
+                        borderRadius: 6,
+                        padding: "4px 8px",
+                        color: selectedSeriesIndex <= 0 ? "rgba(255,255,255,0.3)" : "#fff",
+                        cursor: selectedSeriesIndex <= 0 ? "default" : "pointer",
+                      }}
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <button
+                      onClick={handleNextSeries}
+                      disabled={selectedSeriesIndex >= imageSeries.length - 1}
+                      title="Növbəti şəkil"
+                      style={{
+                        background: "rgba(255,255,255,0.1)",
+                        border: "none",
+                        borderRadius: 6,
+                        padding: "4px 8px",
+                        color: selectedSeriesIndex >= imageSeries.length - 1 ? "rgba(255,255,255,0.3)" : "#fff",
+                        cursor: selectedSeriesIndex >= imageSeries.length - 1 ? "default" : "pointer",
+                      }}
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Middle: Bounding box toggle */}
+              {widgets.showAISuggestion && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.85)" }}>{t("toolbar.showAI")}</span>
+                  <div
+                    onClick={handleAIToggle}
+                    style={{
+                      width: 40,
+                      height: 22,
+                      borderRadius: 99,
+                      background: showAI ? "var(--accent-blue)" : "rgba(255,255,255,0.25)",
+                      position: "relative",
+                      cursor: "pointer",
+                      transition: "background 0.2s",
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 3,
+                        left: showAI ? 20 : 3,
+                        width: 16,
+                        height: 16,
+                        borderRadius: "50%",
+                        background: "#fff",
+                        transition: "left 0.2s",
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Right: Zoom pills + Exit fullscreen button */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {/* Zoom preset pills */}
+                <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.08)", padding: 3, borderRadius: 8 }}>
+                  {[1, 1.5, 2, 3].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        setZoom(s);
+                        if (s === 1) setPan({ x: 0, y: 0 });
+                      }}
+                      style={{
+                        background: Math.abs(zoom - s) < 0.05 ? "var(--accent-blue)" : "transparent",
+                        border: "none",
+                        borderRadius: 6,
+                        padding: "3px 8px",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: "#fff",
+                        cursor: "pointer",
+                        fontFamily: "IBM Plex Mono, monospace",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      {Math.round(s * 100)}%
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setIsFullscreen(false)}
+                  title="Tam ekrandan çıx (Esc)"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    background: "rgba(255,255,255,0.12)",
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    borderRadius: 8,
+                    padding: "6px 12px",
+                    color: "#fff",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}
+                  onMouseOver={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.2)")}
+                  onMouseOut={(e) => (e.currentTarget.style.background = "rgba(255,255,255,0.12)")}
+                >
+                  <Minimize2 size={14} />
+                  <span>Tam ekrandan çıx (Esc)</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Fullscreen body vs Normal body */}
           <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
-              transformOrigin: "center center",
-              transition: isPanning || isDrawing ? "none" : "transform 0.1s ease-out",
-            }}
+            style={
+              isFullscreen
+                ? {
+                    flex: 1,
+                    position: "relative",
+                    width: "100%",
+                    height: "calc(100vh - 52px)",
+                    overflow: "hidden",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "#050608",
+                  }
+                : {
+                    position: "absolute",
+                    inset: 0,
+                  }
+            }
           >
-            {selectedSeries && (
-              <img
-                src={imageUrl(selectedSeries.fullUrl)}
-                alt="Ultrasound"
-                draggable={false}
+            {/* 4:3 Aspect Stage */}
+            <div
+              style={
+                isFullscreen
+                  ? {
+                      position: "relative",
+                      width: "min(calc((100vh - 72px) * 4 / 3), 96vw)",
+                      height: "min(calc(100vh - 72px), calc(96vw * 3 / 4))",
+                      overflow: "hidden",
+                      background: "#000",
+                      borderRadius: 4,
+                      boxShadow: "0 8px 30px rgba(0,0,0,0.6)",
+                    }
+                  : {
+                      position: "absolute",
+                      inset: 0,
+                    }
+              }
+            >
+              {/* Zoomable & Pannable inner container */}
+              <div
+                onDoubleClick={handleDoubleClick}
                 style={{
                   position: "absolute",
                   inset: 0,
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  display: "block",
-                  userSelect: "none",
+                  transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+                  transformOrigin: "center center",
+                  transition: isPanning || isDrawing ? "none" : "transform 0.1s ease-out",
                 }}
-              />
-            )}
-            <canvas
-              ref={canvasRef}
-              width={800}
-              height={600}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                cursor: activeTool === "pan"
-                  ? (isPanning ? "grabbing" : "grab")
-                  : drawMode
-                  ? "crosshair"
-                  : (zoom > 1 ? (isPanning ? "grabbing" : "grab") : "default"),
-              }}
-            />
+              >
+                {selectedSeries && (
+                  <img
+                    src={imageUrl(selectedSeries.fullUrl)}
+                    alt="Ultrasound"
+                    draggable={false}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      display: "block",
+                      userSelect: "none",
+                    }}
+                  />
+                )}
+                <canvas
+                  ref={canvasRef}
+                  width={800}
+                  height={600}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: "100%",
+                    height: "100%",
+                    cursor: activeTool === "pan"
+                      ? (isPanning ? "grabbing" : "grab")
+                      : drawMode
+                      ? "crosshair"
+                      : (zoom > 1 ? (isPanning ? "grabbing" : "grab") : "default"),
+                  }}
+                />
+              </div>
+            </div>
           </div>
 
-          {/* Floating Zoom & Pan Controls */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: 12,
-              right: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 3,
-              background: "rgba(20,24,33,0.85)",
-              backdropFilter: "blur(6px)",
-              border: "1px solid rgba(255,255,255,0.18)",
-              borderRadius: 8,
-              padding: "4px 6px",
-              zIndex: 15,
-              color: "#fff",
-              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            }}
-          >
-            <button
-              onClick={handleZoomOut}
-              disabled={zoom <= 1}
-              title="Şəkli kiçilt (Zoom Out)"
+          {/* Floating Zoom & Pan Controls in Normal Mode */}
+          {!isFullscreen && (
+            <div
               style={{
-                background: "none",
-                border: "none",
-                color: zoom <= 1 ? "rgba(255,255,255,0.3)" : "#fff",
-                cursor: zoom <= 1 ? "default" : "pointer",
-                padding: "3px 4px",
+                position: "absolute",
+                bottom: 12,
+                right: 12,
                 display: "flex",
                 alignItems: "center",
-              }}
-            >
-              <ZoomOut size={16} />
-            </button>
-            <button
-              onClick={handleResetZoom}
-              title="Normal ölçü (100%)"
-              style={{
-                background: "none",
-                border: "none",
+                gap: 4,
+                background: "rgba(20,24,33,0.85)",
+                backdropFilter: "blur(6px)",
+                border: "1px solid rgba(255,255,255,0.18)",
+                borderRadius: 8,
+                padding: "4px 6px",
+                zIndex: 15,
                 color: "#fff",
-                cursor: "pointer",
-                padding: "2px 6px",
-                fontSize: 12,
-                fontWeight: 600,
-                fontFamily: "IBM Plex Mono, monospace",
+                boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
               }}
             >
-              {Math.round(zoom * 100)}%
-            </button>
-            <button
-              onClick={handleZoomIn}
-              disabled={zoom >= 4}
-              title="Şəkli böyüt (Zoom In)"
-              style={{
-                background: "none",
-                border: "none",
-                color: zoom >= 4 ? "rgba(255,255,255,0.3)" : "#fff",
-                cursor: zoom >= 4 ? "default" : "pointer",
-                padding: "3px 4px",
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              <ZoomIn size={16} />
-            </button>
-            {zoom > 1 && (
+              <button
+                onClick={handleZoomOut}
+                disabled={zoom <= 1}
+                title="Şəkli kiçilt (Zoom Out)"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: zoom <= 1 ? "rgba(255,255,255,0.3)" : "#fff",
+                  cursor: zoom <= 1 ? "default" : "pointer",
+                  padding: "3px 4px",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                <ZoomOut size={16} />
+              </button>
               <button
                 onClick={handleResetZoom}
-                title="Sıfırla"
+                title="Normal ölçü (100%)"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#fff",
+                  cursor: "pointer",
+                  padding: "2px 6px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  fontFamily: "IBM Plex Mono, monospace",
+                }}
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                onClick={handleZoomIn}
+                disabled={zoom >= 4}
+                title="Şəkli böyüt (Zoom In)"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: zoom >= 4 ? "rgba(255,255,255,0.3)" : "#fff",
+                  cursor: zoom >= 4 ? "default" : "pointer",
+                  padding: "3px 4px",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                <ZoomIn size={16} />
+              </button>
+              {zoom > 1 && (
+                <button
+                  onClick={handleResetZoom}
+                  title="Sıfırla"
+                  style={{
+                    background: "rgba(255,255,255,0.15)",
+                    border: "none",
+                    borderRadius: 4,
+                    color: "#fff",
+                    cursor: "pointer",
+                    padding: "3px 6px",
+                    fontSize: 11,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 3,
+                  }}
+                >
+                  <RotateCcw size={12} /> Sıfırla
+                </button>
+              )}
+              {/* Fullscreen button */}
+              <button
+                onClick={() => setIsFullscreen(true)}
+                title="Tam ekran rejimi"
                 style={{
                   background: "rgba(255,255,255,0.15)",
                   border: "none",
@@ -967,20 +1279,19 @@ export function ExaminationDetailPage() {
                   color: "#fff",
                   cursor: "pointer",
                   padding: "3px 6px",
-                  fontSize: 11,
-                  marginLeft: 4,
                   display: "flex",
                   alignItems: "center",
                   gap: 3,
+                  marginLeft: 2,
                 }}
               >
-                <RotateCcw size={12} /> Sıfırla
+                <Maximize2 size={13} />
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Download button */}
-          {selectedSeries && (
+          {!isFullscreen && selectedSeries && (
             <button
               onClick={() => void downloadImage(imageUrl(selectedSeries.fullUrl), selectedSeries.label)}
               title="Save image"
@@ -990,8 +1301,8 @@ export function ExaminationDetailPage() {
             </button>
           )}
 
-          {/* Prev / Next arrows */}
-          {imageSeries.length > 1 && (
+          {/* Prev / Next arrows & Dots in Normal Mode */}
+          {!isFullscreen && imageSeries.length > 1 && (
             <>
               <button
                 onClick={handlePrevSeries}

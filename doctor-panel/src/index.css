@@ -199,12 +199,19 @@ button:active {
 
 /* ── Responsive sidebar ─────────────────────────────────────────────── */
 .sidebar.collapsed {
-  width: 0 !important;
-  min-width: 0 !important;
-  border-right: none !important;
-  visibility: hidden !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
+  width: 58px !important;
+  min-width: 58px !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  border-right: 1px solid var(--border) !important;
+}
+
+.sidebar.collapsed .sidebar-logo-text,
+.sidebar.collapsed .sidebar-label,
+.sidebar.collapsed .sidebar-footer-text,
+.sidebar.collapsed .sidebar-language-switcher {
+  display: none !important;
 }
 
 .sidebar {

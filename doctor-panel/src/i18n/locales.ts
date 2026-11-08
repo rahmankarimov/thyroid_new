@@ -104,7 +104,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "tool.clickDisable": "{name} — click to disable",
     "tool.alreadySubmitted": "Already submitted",
     "tool.selectColour": "Select a tool to choose colour",
-    "toolbar.showAI": "Show AI Suggestion",
+    "toolbar.showAI": "Show Bounding Box",
 
     // AI card
     "ai.title": "AI Malignancy Assessment",
@@ -283,7 +283,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "tool.clickDisable": "{name} — söndürmək üçün klikləyin",
     "tool.alreadySubmitted": "Artıq göndərilib",
     "tool.selectColour": "Rəng seçmək üçün alət seçin",
-    "toolbar.showAI": "Sİ Təklifini Göstər",
+    "toolbar.showAI": "Bounding Box-ı Göstər",
 
     "ai.title": "Sİ Bədxassəlilik Qiymətləndirməsi",
     "ai.tirads": "TI-RADS",
@@ -456,7 +456,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "tool.clickDisable": "{name} — нажмите, чтобы отключить",
     "tool.alreadySubmitted": "Уже отправлено",
     "tool.selectColour": "Выберите инструмент, чтобы выбрать цвет",
-    "toolbar.showAI": "Показать предложение ИИ",
+    "toolbar.showAI": "Показать Bounding Box",
 
     "ai.title": "Оценка злокачественности ИИ",
     "ai.tirads": "TI-RADS",
@@ -629,7 +629,7 @@ export const translations: Record<Lang, Record<string, string>> = {
     "tool.clickDisable": "{name} — devre dışı bırakmak için tıklayın",
     "tool.alreadySubmitted": "Zaten gönderildi",
     "tool.selectColour": "Renk seçmek için bir araç seçin",
-    "toolbar.showAI": "YZ Önerisini Göster",
+    "toolbar.showAI": "Bounding Box Göster",
 
     "ai.title": "YZ Malignite Değerlendirmesi",
     "ai.tirads": "TI-RADS",
