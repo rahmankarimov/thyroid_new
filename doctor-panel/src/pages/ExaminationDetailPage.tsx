@@ -395,18 +395,6 @@ export function ExaminationDetailPage() {
     setPan({ x: 0, y: 0 });
   }
 
-  function handleWheel(e: React.WheelEvent) {
-    if (e.deltaY < 0) {
-      setZoom((prev) => Math.min(+(prev + 0.2).toFixed(2), 4));
-    } else {
-      setZoom((prev) => {
-        const next = Math.max(+(prev - 0.2).toFixed(2), 1);
-        if (next === 1) setPan({ x: 0, y: 0 });
-        return next;
-      });
-    }
-  }
-
   function handleMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
     // If pan tool or (not in drawMode and zoomed in) or middle mouse button
     if (activeTool === "pan" || (!drawMode && zoom > 1) || e.button === 1) {
@@ -959,7 +947,7 @@ export function ExaminationDetailPage() {
               {/* Left: Patient & Series info */}
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
-                  {patient?.name || "Xəstə"}
+                  {patient ? `${patient.firstName} ${patient.lastName}` : "Xəstə"}
                 </span>
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>•</span>
                 <span style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", fontFamily: "IBM Plex Mono, monospace" }}>
