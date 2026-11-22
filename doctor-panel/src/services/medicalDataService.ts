@@ -110,8 +110,8 @@ export const medicalDataService = {
     return api.post<void>("/audit-logs", event).catch(() => {});
   },
 
-  getNextRandomExaminationId(): Promise<{ patientId: string, examId: string }> {
-    return api.get<{ patientId: string, examId: string }>(`/rating-queue/next?_t=${Date.now()}`);
+  getNextRandomExaminationId(): Promise<{ patientId: string; examId: string; remainingSeconds: number }> {
+    return api.get<{ patientId: string; examId: string; remainingSeconds: number }>(`/rating-queue/next?_t=${Date.now()}`);
   },
 
   saveTiradsResult(examinationId: string, result: {

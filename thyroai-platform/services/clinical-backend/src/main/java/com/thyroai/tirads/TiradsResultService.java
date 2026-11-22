@@ -23,6 +23,7 @@ public class TiradsResultService {
     private final TiradsResultRepository repository;
     private final ExaminationRepository examinationRepository;
     private final UserRepository userRepository;
+    private final com.thyroai.ratingqueue.ImageReservationRepository reservationRepository;
 
     @Transactional
     public TiradsResultDTO create(UUID examinationId, CreateTiradsResultRequest request) {
@@ -39,6 +40,32 @@ public class TiradsResultService {
 
         String email = SecurityContextHolder.getContext().getAuthentication().getName();
         User currentUser = userRepository.findByEmail(email).orElse(null);
+        UUID currentUserId = currentUser != null ? currentUser.getId() : null;
+
+        // Defensive checks from Algorithm 2 (SubmitAnnotation):
+        // 1. Check duplicate annotation
+        if (currentUserId != null) {
+            boolean alreadyAnnotated = repository.findByExaminationIdOrderByCreatedAtDesc(examinationId).stream()
+                    .anyMatch(tr -> tr.getCreatedBy() != null && tr.getCreatedBy().getId().equals(currentUserId));
+            if (alreadyAnnotated) {
+                throw new IllegalStateException("Bu şəkli artıq qiymətləndirmisiniz!");
+            }
+        }
+
+        // 2. Check 3-annotation limit for non-common pool
+        long currentCount = repository.findByExaminationIdOrderByCreatedAtDesc(examinationId).size();
+        if (!exam.isCommonPool() && currentCount >= 3) {
+            throw new IllegalStateException("Bu şəkil artıq maksimum (3) həkim tərəfindən qiymətləndirilib!");
+        }
+
+        // 3. Close the active reservation for (exam, clinician)
+        if (currentUserId != null) {
+            reservationRepository.findActiveByExamAndClinician(examinationId, currentUserId, java.time.LocalDateTime.now())
+                    .ifPresent(res -> {
+                        res.setStatus("COMPLETED");
+                        reservationRepository.save(res);
+                    });
+        }
 
         TiradsResult result = TiradsResult.builder()
                 .examination(exam)
@@ -55,7 +82,7 @@ public class TiradsResultService {
         result = repository.save(result);
         
         long count = repository.findByExaminationIdOrderByCreatedAtDesc(examinationId).size();
-        if (count >= 3) {
+        if (!exam.isCommonPool() && count >= 3) {
             exam.setStatus("COMPLETED");
             examinationRepository.save(exam);
         }

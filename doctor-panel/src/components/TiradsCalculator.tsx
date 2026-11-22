@@ -1,6 +1,6 @@
-import { useMemo, useState, useEffect, useContext } from "react";
+import { useMemo, useState, useEffect, useContext, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { RotateCcw, X, Check, AlertCircle, ArrowRight } from "lucide-react";
+import { RotateCcw, X, Check, AlertCircle, ArrowRight, Clock } from "lucide-react";
 import { TIRADS_CATEGORIES, classifyTirads } from "../data/tirads";
 import type { TiradsCategory, TiradsLevel } from "../data/tirads";
 import { useT } from "../i18n";
@@ -53,7 +53,7 @@ function pointsBadge(points: number, additive: boolean, selected: boolean) {
   );
 }
 
-export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => void; examinationId?: string } = {}) {
+export function TiradsCalculator({ onClose, examinationId, reservationSeconds }: { onClose?: () => void; examinationId?: string; reservationSeconds?: number } = {}) {
   const t = useT();
   const navigate = useNavigate();
   const showToast = useContext(ToastContext);
@@ -64,12 +64,41 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
-  // Reset when examination changes
+  // 3-minute reservation countdown timer (180 seconds)
+  const [timeLeft, setTimeLeft] = useState<number>(reservationSeconds ?? 180);
+  const timerRef = useRef<any>(null);
+
+  // Reset & restart timer when examination changes
   useEffect(() => {
     setSingle({});
     setFoci([]);
     setSubmitted(false);
-  }, [examinationId]);
+    setTimeLeft(reservationSeconds ?? 180);
+
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    timerRef.current = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          if (timerRef.current) clearInterval(timerRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [examinationId, reservationSeconds]);
+
+  // When timer hits 0 without submission, automatically advance to next image
+  useEffect(() => {
+    if (timeLeft === 0 && !submitted) {
+      showToast?.("3 dəqiqəlik rezervasiya müddəti bitdi! Şəkil növbəyə qaytarıldı və yeni şəkil yüklənir.", "error");
+      advanceToNextImage();
+    }
+  }, [timeLeft, submitted]);
 
   function selectSingle(catKey: string, optId: string) {
     setSingle((prev) => (prev[catKey] === optId ? (() => { const n = { ...prev }; delete n[catKey]; return n; })() : { ...prev, [catKey]: optId }));
@@ -127,7 +156,9 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
         setSingle({});
         setFoci([]);
         setSubmitted(false);
-        navigate(`/patients/${data.patientId}/examinations/${data.examId}`);
+        navigate(`/patients/${data.patientId}/examinations/${data.examId}`, {
+          state: { remainingSeconds: data.remainingSeconds ?? 180 },
+        });
       } else {
         showToast?.("Növbədə yeni təsdiqlənməmiş müayinə tapılmadı.", "info");
       }
@@ -168,7 +199,24 @@ export function TiradsCalculator({ onClose, examinationId }: { onClose?: () => v
   return (
     <div className="soft-card" style={{ padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{t("tirads.title")}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{t("tirads.title")}</div>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            fontSize: 12,
+            fontWeight: 700,
+            padding: "3px 8px",
+            borderRadius: 6,
+            background: timeLeft < 30 ? "rgba(239, 68, 68, 0.15)" : "var(--bg-muted)",
+            color: timeLeft < 30 ? "var(--accent-danger)" : "var(--accent-blue)",
+            border: `1px solid ${timeLeft < 30 ? "var(--accent-danger)" : "var(--border)"}`
+          }}>
+            <Clock size={12} />
+            <span>{Math.floor(timeLeft / 60)}:{String(timeLeft % 60).padStart(2, '0')}</span>
+          </div>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {touched && (
             <button

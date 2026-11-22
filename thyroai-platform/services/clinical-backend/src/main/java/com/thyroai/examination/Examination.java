@@ -39,6 +39,14 @@ public class Examination {
     @Builder.Default
     private String source = "MANUAL";
 
+    @Column(name = "is_common_pool", nullable = false)
+    @Builder.Default
+    private boolean isCommonPool = false;
+
+    @Column(name = "batch_index", nullable = false)
+    @Builder.Default
+    private int batchIndex = 1;
+
     @OneToMany(mappedBy = "examination", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<ImageSeries> imageSeries = new ArrayList<>();
