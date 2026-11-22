@@ -440,7 +440,7 @@ export function TiradsCalculator({
 
           {submitted && (
             <button
-              onClick={advanceToNextImage}
+              onClick={() => void advanceToNextImage(false)}
               style={{
                 width: "100%",
                 padding: "11px",
