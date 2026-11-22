@@ -22,11 +22,17 @@ public class UserManagementService {
     private final UserPermissionRepository permissionRepository;
     private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final com.thyroai.hospital.HospitalRepository hospitalRepository;
 
     public List<UserWithPermissionsDTO> findAllForAdmin(String adminEmail) {
         User admin = userRepository.findByEmail(adminEmail)
                 .orElseThrow(() -> new IllegalArgumentException("Admin not found"));
-        if (admin.getHospital() == null) return List.of();
+        if (admin.getHospital() == null) {
+            return userRepository.findAll().stream()
+                    .filter(u -> u.getRole() != UserRole.SUPER_ADMIN && u.getRole() != UserRole.ADMIN)
+                    .map(this::toWithPermissions)
+                    .toList();
+        }
         return userRepository.findByHospital_Id(admin.getHospital().getId()).stream()
                 .filter(u -> u.getRole() != UserRole.SUPER_ADMIN && u.getRole() != UserRole.ADMIN)
                 .map(this::toWithPermissions)
@@ -48,6 +54,11 @@ public class UserManagementService {
                 ? roleRepository.findById(req.getCustomRoleId()).orElse(null)
                 : null;
 
+        com.thyroai.hospital.Hospital hospital = admin.getHospital();
+        if (hospital == null) {
+            hospital = hospitalRepository.findAll().stream().findFirst().orElse(null);
+        }
+
         User user = userRepository.save(User.builder()
                 .email(req.getEmail())
                 .passwordHash(passwordEncoder.encode(req.getPassword()))
@@ -55,7 +66,7 @@ public class UserManagementService {
                 .lastName(req.getLastName())
                 .role(req.getRole() != null ? req.getRole() : UserRole.DOCTOR)
                 .customRole(customRole)
-                .hospital(admin.getHospital())
+                .hospital(hospital)
                 .active(true)
                 .build());
 

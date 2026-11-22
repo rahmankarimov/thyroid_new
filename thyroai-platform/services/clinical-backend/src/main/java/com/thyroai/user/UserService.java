@@ -30,11 +30,21 @@ public class UserService implements UserDetailsService {
         boolean hospitalActive = user.getHospital() == null || user.getHospital().isActive();
         boolean active = permissionActive && hospitalActive;
 
+        List<SimpleGrantedAuthority> authorities;
+        if (user.getRole() == UserRole.SUPER_ADMIN) {
+            authorities = List.of(
+                    new SimpleGrantedAuthority("ROLE_SUPER_ADMIN"),
+                    new SimpleGrantedAuthority("ROLE_ADMIN")
+            );
+        } else {
+            authorities = List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()));
+        }
+
         return new org.springframework.security.core.userdetails.User(
                 user.getEmail(),
                 user.getPasswordHash(),
                 active, true, true, true,
-                List.of(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()))
+                authorities
         );
     }
 
