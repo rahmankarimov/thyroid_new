@@ -53,7 +53,17 @@ function pointsBadge(points: number, additive: boolean, selected: boolean) {
   );
 }
 
-export function TiradsCalculator({ onClose, examinationId, reservationSeconds }: { onClose?: () => void; examinationId?: string; reservationSeconds?: number } = {}) {
+export function TiradsCalculator({
+  onClose,
+  examinationId,
+  reservationSeconds,
+  reservationDeadlineMs,
+}: {
+  onClose?: () => void;
+  examinationId?: string;
+  reservationSeconds?: number;
+  reservationDeadlineMs?: number;
+} = {}) {
   const t = useT();
   const navigate = useNavigate();
   const showToast = useContext(ToastContext);
@@ -64,41 +74,62 @@ export function TiradsCalculator({ onClose, examinationId, reservationSeconds }:
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
-  // 3-minute reservation countdown timer (180 seconds)
-  const [timeLeft, setTimeLeft] = useState<number>(reservationSeconds ?? 180);
-  const timerRef = useRef<any>(null);
+  // Compute remaining seconds from authoritative deadline timestamp
+  const computeRemaining = () => {
+    if (reservationDeadlineMs != null) {
+      return Math.max(0, Math.round((reservationDeadlineMs - Date.now()) / 1000));
+    }
+    return reservationSeconds ?? 180;
+  };
 
-  // Reset & restart timer when examination changes
+  const [timeLeft, setTimeLeft] = useState<number>(computeRemaining);
+  const timerRef = useRef<any>(null);
+  const expiredHandledRef = useRef<boolean>(false);
+
+  // Reset form selections ONLY when examinationId changes
   useEffect(() => {
     setSingle({});
     setFoci([]);
     setSubmitted(false);
-    setTimeLeft(reservationSeconds ?? 180);
+    expiredHandledRef.current = false;
+  }, [examinationId]);
+
+  // Synchronize countdown timer with reservationDeadlineMs
+  useEffect(() => {
+    if (reservationDeadlineMs == null && reservationSeconds == null) {
+      return;
+    }
+    const targetMs = reservationDeadlineMs ?? (Date.now() + (reservationSeconds ?? 180) * 1000);
+    const updateTick = () => {
+      const rem = Math.max(0, Math.round((targetMs - Date.now()) / 1000));
+      setTimeLeft(rem);
+      if (rem <= 0 && timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+    updateTick();
 
     if (timerRef.current) clearInterval(timerRef.current);
-
-    timerRef.current = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          if (timerRef.current) clearInterval(timerRef.current);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    timerRef.current = setInterval(updateTick, 500);
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [examinationId, reservationSeconds]);
+  }, [examinationId, reservationDeadlineMs, reservationSeconds]);
 
-  // When timer hits 0 without submission, automatically advance to next image
+  // When timer hits 0 without submission, expire current reservation and advance to next image
   useEffect(() => {
-    if (timeLeft === 0 && !submitted) {
+    if (
+      timeLeft === 0 &&
+      !submitted &&
+      !expiredHandledRef.current &&
+      (reservationDeadlineMs != null || reservationSeconds != null)
+    ) {
+      expiredHandledRef.current = true;
       showToast?.("3 dəqiqəlik rezervasiya müddəti bitdi! Şəkil növbəyə qaytarıldı və yeni şəkil yüklənir.", "error");
-      advanceToNextImage();
+      void advanceToNextImage(true);
     }
-  }, [timeLeft, submitted]);
+  }, [timeLeft, submitted, reservationDeadlineMs, reservationSeconds]);
 
   function selectSingle(catKey: string, optId: string) {
     setSingle((prev) => (prev[catKey] === optId ? (() => { const n = { ...prev }; delete n[catKey]; return n; })() : { ...prev, [catKey]: optId }));
@@ -149,15 +180,15 @@ export function TiradsCalculator({ onClose, examinationId, reservationSeconds }:
     setFoci([]);
   }
 
-  async function advanceToNextImage() {
+  async function advanceToNextImage(expireCurrent = false) {
     try {
-      const data = await medicalDataService.getNextRandomExaminationId();
+      const data = await medicalDataService.getNextRandomExaminationId(expireCurrent);
       if (data && data.patientId && data.examId) {
         setSingle({});
         setFoci([]);
         setSubmitted(false);
         navigate(`/patients/${data.patientId}/examinations/${data.examId}`, {
-          state: { remainingSeconds: data.remainingSeconds ?? 180 },
+          state: { remainingSeconds: data.remainingSeconds ?? 180, fetchedAt: Date.now() },
         });
       } else {
         showToast?.("Növbədə yeni təsdiqlənməmiş müayinə tapılmadı.", "info");

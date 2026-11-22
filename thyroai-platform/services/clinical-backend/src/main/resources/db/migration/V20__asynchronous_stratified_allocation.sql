@@ -21,9 +21,16 @@ CREATE TABLE IF NOT EXISTS image_reservations (
     clinician_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     reserved_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL,
-    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE', 'COMPLETED', 'EXPIRED', 'RELEASED'
-    CONSTRAINT uq_active_reservation_exam_clinician UNIQUE (examination_id, clinician_id, status)
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' -- 'ACTIVE', 'COMPLETED', 'EXPIRED', 'RELEASED'
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_res_exam_clinician
+    ON image_reservations(examination_id, clinician_id)
+    WHERE status = 'ACTIVE';
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_active_res_per_clinician
+    ON image_reservations(clinician_id)
+    WHERE status = 'ACTIVE';
 
 CREATE INDEX IF NOT EXISTS idx_reservations_exam_active ON image_reservations(examination_id, status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_reservations_clinician_active ON image_reservations(clinician_id, status, expires_at);

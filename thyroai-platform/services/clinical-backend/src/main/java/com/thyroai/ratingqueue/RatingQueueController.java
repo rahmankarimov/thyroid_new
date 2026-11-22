@@ -17,16 +17,28 @@ public class RatingQueueController {
     private final RatingQueueService service;
 
     @GetMapping("/next")
-    public ResponseEntity<ApiResponse<QueueNextResponse>> getNext() {
+    public ResponseEntity<ApiResponse<QueueNextResponse>> getNext(
+            @RequestParam(value = "expireCurrent", defaultValue = "false") boolean expireCurrent) {
         try {
             return ResponseEntity.ok()
                     .cacheControl(CacheControl.noStore().mustRevalidate())
-                    .body(ApiResponse.ok(service.getNextRandomExaminationId()));
+                    .body(ApiResponse.ok(service.getNextRandomExaminationId(expireCurrent)));
         } catch (Exception e) {
-            log.error("Failed to retrieve next random examination from rating queue: {}", e.getMessage());
+            log.error("Failed to retrieve next examination from rating queue: {}", e.getMessage());
             return ResponseEntity.status(404)
                     .cacheControl(CacheControl.noStore().mustRevalidate())
                     .body(ApiResponse.error(e.getMessage()));
+        }
+    }
+
+    @PostMapping("/release")
+    public ResponseEntity<ApiResponse<Void>> releaseCurrentReservation() {
+        try {
+            service.releaseCurrentReservation();
+            return ResponseEntity.ok(ApiResponse.ok(null));
+        } catch (Exception e) {
+            log.error("Failed to release active reservation: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         }
     }
 }

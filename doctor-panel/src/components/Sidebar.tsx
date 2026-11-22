@@ -53,7 +53,8 @@ export function Sidebar() {
       .catch(() => {});
   }, []);
 
-  function logout() {
+  async function logout() {
+    await api.post<void>("/audit-logs", { action: "LOGOUT", details: "User logged out via sidebar" }).catch(() => {});
     localStorage.removeItem("thyroai_user");
     navigate("/login");
   }

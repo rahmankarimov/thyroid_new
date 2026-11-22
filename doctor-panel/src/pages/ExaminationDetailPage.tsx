@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useContext, useMemo } from "react";
-import { useParams, useLocation } from "react-router-dom";
+import { useParams, useLocation, useNavigate } from "react-router-dom";
 import {
   Pen, Eraser, ChevronLeft, ChevronRight, Trash2, Download, Plus, X, Lock,
   Square, Circle, ArrowUpRight, LogOut, ZoomIn, ZoomOut, RotateCcw, Hand, Undo2, Maximize2, Minimize2
@@ -76,6 +76,7 @@ function AnnotationModal({ onSave, onDiscard }: AnnotationModalProps) {
 export function ExaminationDetailPage() {
   const { patientId, examId } = useParams<{ patientId: string; examId: string }>();
   const location = useLocation();
+  const navigate = useNavigate();
   const showToast = useContext(ToastContext);
   const t = useT();
   const widgets = useWidgetSettings();
@@ -83,27 +84,40 @@ export function ExaminationDetailPage() {
   const isSmallScreen = windowWidth < 1000;
   const annotationPanelWidth = windowWidth >= 1200 ? 280 : 200;
 
-  // Server-driven reservation remaining seconds (for timer resume after logout/login)
-  const [reservationSeconds, setReservationSeconds] = useState<number | undefined>(
-    (location.state as any)?.remainingSeconds
-  );
-
-  // On mount (or examId change): if no state from navigation, fetch remaining time from server
-  useEffect(() => {
-    const navState = (location.state as any)?.remainingSeconds;
-    if (navState != null) {
-      setReservationSeconds(navState);
-    } else {
-      // Fetch from server so timer resumes correctly after login/page refresh
-      medicalDataService.getNextRandomExaminationId().then((data) => {
-        if (data && data.examId === examId) {
-          setReservationSeconds(data.remainingSeconds ?? 180);
-        } else {
-          setReservationSeconds(180);
-        }
-      }).catch(() => setReservationSeconds(180));
+  // Authoritative reservation deadline timestamp (epoch ms) synchronized with backend
+  const [reservationDeadlineMs, setReservationDeadlineMs] = useState<number | undefined>(() => {
+    const st = location.state as { remainingSeconds?: number; fetchedAt?: number } | null;
+    if (st?.remainingSeconds != null && st?.fetchedAt != null && Date.now() - st.fetchedAt < 2000) {
+      return st.fetchedAt + st.remainingSeconds * 1000;
     }
-  }, [examId]);
+    return undefined;
+  });
+
+  // Always synchronize remaining reservation time from the backend on mount or examId change
+  useEffect(() => {
+    let cancelled = false;
+    const st = location.state as { remainingSeconds?: number; fetchedAt?: number } | null;
+    if (st?.remainingSeconds != null && st?.fetchedAt != null && Date.now() - st.fetchedAt < 2000) {
+      setReservationDeadlineMs(st.fetchedAt + st.remainingSeconds * 1000);
+      // Clear stale navigation state so subsequent page refreshes (F5) always query the server
+      window.history.replaceState({}, "");
+    } else {
+      medicalDataService.getNextRandomExaminationId(false).then((data) => {
+        if (cancelled || !data) return;
+        if (data.examId && data.examId !== examId) {
+          navigate(`/patients/${data.patientId}/examinations/${data.examId}`, {
+            replace: true,
+            state: { remainingSeconds: data.remainingSeconds ?? 180, fetchedAt: Date.now() },
+          });
+          return;
+        }
+        setReservationDeadlineMs(Date.now() + (data.remainingSeconds ?? 180) * 1000);
+      }).catch(() => {
+        if (!cancelled) setReservationDeadlineMs(Date.now() + 180 * 1000);
+      });
+    }
+    return () => { cancelled = true; };
+  }, [examId, navigate]);
 
   const rawUser = localStorage.getItem("thyroai_user");
   const currentUser = rawUser ? JSON.parse(rawUser) : null;
@@ -732,11 +746,18 @@ export function ExaminationDetailPage() {
               </button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-              <TiradsCalculator examinationId={examId} reservationSeconds={reservationSeconds} />
+              <TiradsCalculator examinationId={examId} reservationDeadlineMs={reservationDeadlineMs} />
             </div>
             <div style={{ padding: "12px", borderTop: "1px solid var(--border)" }}>
               <button
-                onClick={() => {
+                onClick={async () => {
+                  const remSec = reservationDeadlineMs ? Math.max(0, Math.round((reservationDeadlineMs - Date.now()) / 1000)) : 0;
+                  const spentSec = Math.max(0, 180 - remSec);
+                  await medicalDataService.logAuditEvent({
+                    patientId,
+                    action: "LOGOUT",
+                    details: `Exam: ${examId}, Spent: ${spentSec}s, Remaining: ${remSec}s`,
+                  });
                   localStorage.removeItem("thyroai_user");
                   window.location.href = "/login";
                 }}

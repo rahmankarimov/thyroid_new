@@ -2,6 +2,7 @@ package com.thyroai.ratingqueue;
 
 import com.thyroai.examination.Examination;
 import com.thyroai.examination.ExaminationRepository;
+import com.thyroai.ratingqueue.dto.QueueNextResponse;
 import com.thyroai.user.User;
 import com.thyroai.user.UserRepository;
 import jakarta.persistence.EntityManager;
@@ -13,7 +14,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.thyroai.ratingqueue.dto.QueueNextResponse;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -30,46 +30,80 @@ public class RatingQueueService {
     @PersistenceContext
     private EntityManager entityManager;
 
-    @Value("${thyroai.allocation.reservation-timeout-minutes:3}")
-    private int reservationTimeoutMinutes;
+    @Value("${thyroai.allocation.reservation-timeout-seconds:180}")
+    private int reservationTimeoutSeconds;
 
     @Transactional
     public QueueNextResponse getNextRandomExaminationId() {
+        return getNextRandomExaminationId(false);
+    }
+
+    @Transactional
+    public QueueNextResponse getNextRandomExaminationId(boolean expireCurrent) {
         String email = SecurityContextHolder.getContext().getAuthentication().getName();
         User clinician = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + email));
 
         UUID clinicianId = clinician.getId();
+
+        // Serialize concurrent requests for the same clinician (e.g. React StrictMode double-mount)
+        entityManager.createNativeQuery("SELECT CAST(id AS text) FROM users WHERE id = :id FOR UPDATE")
+                .setParameter("id", clinicianId)
+                .getResultList();
+
         LocalDateTime now = LocalDateTime.now();
 
-        // 1. Expire outdated reservations first
+        // 1. Expire outdated reservations globally
         reservationRepository.expireStaleReservations(now);
 
+        // If the frontend timer hit 0:00 and requested expiration of the current reservation:
+        if (expireCurrent) {
+            reservationRepository.expireActiveByClinician(clinicianId);
+            entityManager.flush();
+        }
+
         // 2. Check if this clinician already has an active, valid reservation (session resume)
-        Optional<ImageReservation> activeRes = reservationRepository.findActiveByClinician(clinicianId, now);
-        if (activeRes.isPresent()) {
-            ImageReservation r = activeRes.get();
+        List<ImageReservation> activeList = reservationRepository.findActiveByClinician(clinicianId, now);
+        if (!activeList.isEmpty()) {
+            ImageReservation r = activeList.get(0);
+            // Clean up any stale duplicates if they ever existed
+            if (activeList.size() > 1) {
+                for (int i = 1; i < activeList.size(); i++) {
+                    ImageReservation dup = activeList.get(i);
+                    dup.setStatus("RELEASED");
+                    reservationRepository.save(dup);
+                }
+                entityManager.flush();
+            }
+
             UUID examId = r.getExaminationId();
-            Examination exam = examinationRepository.findById(examId)
-                    .orElseThrow(() -> new IllegalArgumentException("Reserved exam not found"));
-            long remaining = Math.max(0, ChronoUnit.SECONDS.between(now, r.getExpiresAt()));
-            return QueueNextResponse.builder()
-                    .patientId(exam.getPatient().getId())
-                    .examId(examId)
-                    .remainingSeconds(remaining)
-                    .expiresAt(r.getExpiresAt().toString())
-                    .build();
+            Optional<Examination> examOpt = examinationRepository.findById(examId);
+            if (examOpt.isPresent() && isStillEligibleForClinician(examOpt.get(), clinicianId)) {
+                Examination exam = examOpt.get();
+                long remaining = Math.max(1, ChronoUnit.SECONDS.between(now, r.getExpiresAt()));
+                return QueueNextResponse.builder()
+                        .patientId(exam.getPatient().getId())
+                        .examId(examId)
+                        .remainingSeconds(remaining)
+                        .expiresAt(r.getExpiresAt().toString())
+                        .build();
+            } else {
+                r.setStatus("COMPLETED");
+                reservationRepository.save(r);
+                entityManager.flush();
+            }
         }
 
         // 3. Phase 1: Fixed Common Initial Pool (I0)
-        // Check if there are common pool images not yet completed by this clinician
+        // Every newly registered clinician must complete all k images in I0 before main pool allocation
         List<?> pendingCommonPool = entityManager.createNativeQuery(
                 "SELECT CAST(e.id AS text) FROM examinations e " +
+                "JOIN patients p ON p.id = e.patient_id " +
                 "WHERE e.is_common_pool = TRUE " +
                 "AND NOT EXISTS (" +
                 "    SELECT 1 FROM tirads_results tr WHERE tr.examination_id = e.id AND tr.created_by = :clinicianId" +
                 ") " +
-                "ORDER BY e.examination_date ASC, RANDOM() LIMIT 1")
+                "ORDER BY p.fin ASC, e.examination_date ASC LIMIT 1")
                 .setParameter("clinicianId", clinicianId)
                 .getResultList();
 
@@ -77,7 +111,7 @@ public class RatingQueueService {
             UUID selectedExamId = UUID.fromString((String) pendingCommonPool.get(0));
             ImageReservation res = createReservation(selectedExamId, clinicianId, now);
             Examination exam = examinationRepository.findById(selectedExamId).orElseThrow();
-            long remaining = Math.max(0, ChronoUnit.SECONDS.between(now, res.getExpiresAt()));
+            long remaining = Math.max(1, ChronoUnit.SECONDS.between(now, res.getExpiresAt()));
             return QueueNextResponse.builder()
                     .patientId(exam.getPatient().getId())
                     .examId(selectedExamId)
@@ -90,6 +124,7 @@ public class RatingQueueService {
         int currentBatch = getClinicianCurrentBatch(clinicianId);
         int maxBatch = getMaxBatchIndex();
 
+        // Forward progression from clinician's current batch b(c) up to m
         for (int b = currentBatch; b <= maxBatch; b++) {
             UUID allocatedId = tryAllocateFromBatch(b, clinicianId, now);
             if (allocatedId != null) {
@@ -98,7 +133,24 @@ public class RatingQueueService {
                 }
                 ImageReservation res = createReservation(allocatedId, clinicianId, now);
                 Examination exam = examinationRepository.findById(allocatedId).orElseThrow();
-                long remaining = Math.max(0, ChronoUnit.SECONDS.between(now, res.getExpiresAt()));
+                long remaining = Math.max(1, ChronoUnit.SECONDS.between(now, res.getExpiresAt()));
+                return QueueNextResponse.builder()
+                        .patientId(exam.getPatient().getId())
+                        .examId(allocatedId)
+                        .remainingSeconds(remaining)
+                        .expiresAt(res.getExpiresAt().toString())
+                        .build();
+            }
+        }
+
+        // Backfill check: if earlier batches (1 .. currentBatch - 1) have newly freed slots
+        // (e.g., due to another clinician's expired reservation after this clinician advanced), complete them!
+        for (int b = 1; b < currentBatch; b++) {
+            UUID allocatedId = tryAllocateFromBatch(b, clinicianId, now);
+            if (allocatedId != null) {
+                ImageReservation res = createReservation(allocatedId, clinicianId, now);
+                Examination exam = examinationRepository.findById(allocatedId).orElseThrow();
+                long remaining = Math.max(1, ChronoUnit.SECONDS.between(now, res.getExpiresAt()));
                 return QueueNextResponse.builder()
                         .patientId(exam.getPatient().getId())
                         .examId(allocatedId)
@@ -109,6 +161,33 @@ public class RatingQueueService {
         }
 
         throw new IllegalArgumentException("Bütün mövcud şəkillər tamamlanıb və ya hovuzda boş yer qalmayıb!");
+    }
+
+    @Transactional
+    public void releaseCurrentReservation() {
+        String email = SecurityContextHolder.getContext().getAuthentication().getName();
+        userRepository.findByEmail(email).ifPresent(clinician -> {
+            reservationRepository.releaseActiveByClinician(clinician.getId());
+        });
+    }
+
+    private boolean isStillEligibleForClinician(Examination exam, UUID clinicianId) {
+        Number alreadyDone = (Number) entityManager.createNativeQuery(
+                "SELECT COUNT(1) FROM tirads_results tr WHERE tr.examination_id = :examId AND tr.created_by = :clinicianId")
+                .setParameter("examId", exam.getId())
+                .setParameter("clinicianId", clinicianId)
+                .getSingleResult();
+        if (alreadyDone.longValue() > 0) {
+            return false;
+        }
+        if (!exam.isCommonPool()) {
+            Number totalDone = (Number) entityManager.createNativeQuery(
+                    "SELECT COUNT(1) FROM tirads_results tr WHERE tr.examination_id = :examId")
+                    .setParameter("examId", exam.getId())
+                    .getSingleResult();
+            return totalDone.longValue() < 3;
+        }
+        return true;
     }
 
     private UUID tryAllocateFromBatch(int batchIndex, UUID clinicianId, LocalDateTime now) {
@@ -136,25 +215,38 @@ public class RatingQueueService {
             "        ei.a_count, " +
             "        CASE " +
             "            WHEN ei.a_count = 2 THEN (" +
-            "                SELECT COALESCE(COUNT(DISTINCT other_tr.examination_id), 0) " +
-            "                FROM tirads_results other_tr " +
-            "                WHERE other_tr.created_by = :clinicianId " +
-            "                  AND other_tr.examination_id IN (" +
-            "                      SELECT tr_exist.examination_id FROM tirads_results tr_exist " +
-            "                      WHERE tr_exist.created_by IN (" +
-            "                          SELECT tr_sub.created_by FROM tirads_results tr_sub WHERE tr_sub.examination_id = ei.id" +
-            "                      )" +
-            "                  )" +
+            "                SELECT COUNT(1) " +
+            "                FROM examinations e_other " +
+            "                WHERE e_other.is_common_pool = FALSE " +
+            "                  AND EXISTS (" +
+            "                      SELECT 1 FROM tirads_results tr_c " +
+            "                      WHERE tr_c.examination_id = e_other.id AND tr_c.created_by = :clinicianId" +
+            "                  ) " +
+            "                  AND (" +
+            "                      SELECT COUNT(DISTINCT tr_xy.created_by) " +
+            "                      FROM tirads_results tr_xy " +
+            "                      WHERE tr_xy.examination_id = e_other.id " +
+            "                        AND tr_xy.created_by IN (" +
+            "                            SELECT tr_exist.created_by FROM tirads_results tr_exist WHERE tr_exist.examination_id = ei.id" +
+            "                        ) " +
+            "                        AND tr_xy.created_by <> :clinicianId" +
+            "                  ) = 2" +
             "            ) " +
             "            WHEN ei.a_count = 1 THEN (" +
-            "                SELECT COALESCE(COUNT(DISTINCT other_tr.examination_id), 0) " +
-            "                FROM tirads_results other_tr " +
-            "                WHERE other_tr.created_by = :clinicianId " +
-            "                  AND other_tr.examination_id IN (" +
-            "                      SELECT tr_exist.examination_id FROM tirads_results tr_exist " +
-            "                      WHERE tr_exist.created_by = (" +
-            "                          SELECT tr_sub.created_by FROM tirads_results tr_sub WHERE tr_sub.examination_id = ei.id LIMIT 1" +
-            "                      )" +
+            "                SELECT COUNT(1) " +
+            "                FROM examinations e_other " +
+            "                WHERE e_other.is_common_pool = FALSE " +
+            "                  AND EXISTS (" +
+            "                      SELECT 1 FROM tirads_results tr_c " +
+            "                      WHERE tr_c.examination_id = e_other.id AND tr_c.created_by = :clinicianId" +
+            "                  ) " +
+            "                  AND EXISTS (" +
+            "                      SELECT 1 FROM tirads_results tr_x " +
+            "                      WHERE tr_x.examination_id = e_other.id " +
+            "                        AND tr_x.created_by IN (" +
+            "                            SELECT tr_exist.created_by FROM tirads_results tr_exist WHERE tr_exist.examination_id = ei.id" +
+            "                        ) " +
+            "                        AND tr_x.created_by <> :clinicianId" +
             "                  )" +
             "            ) " +
             "            ELSE 0 " +
@@ -181,14 +273,18 @@ public class RatingQueueService {
     }
 
     private ImageReservation createReservation(UUID examId, UUID clinicianId, LocalDateTime now) {
+        // Ensure no lingering active reservation exists for this clinician before inserting
+        reservationRepository.releaseActiveByClinician(clinicianId);
+        entityManager.flush();
+
         ImageReservation res = ImageReservation.builder()
                 .examinationId(examId)
                 .clinicianId(clinicianId)
                 .reservedAt(now)
-                .expiresAt(now.plusMinutes(reservationTimeoutMinutes))
+                .expiresAt(now.plusSeconds(reservationTimeoutSeconds))
                 .status("ACTIVE")
                 .build();
-        return reservationRepository.save(res);
+        return reservationRepository.saveAndFlush(res);
     }
 
     private int getClinicianCurrentBatch(UUID clinicianId) {

@@ -82,13 +82,19 @@ function IndexRedirect() {
       return;
     }
 
+    let cancelled = false;
     medicalDataService.getNextRandomExaminationId()
       .then((data) => {
-        navigate(`/patients/${data.patientId}/examinations/${data.examId}`, { replace: true });
+        if (cancelled) return;
+        navigate(`/patients/${data.patientId}/examinations/${data.examId}`, {
+          replace: true,
+          state: { remainingSeconds: data.remainingSeconds, fetchedAt: Date.now() },
+        });
       })
       .catch((err) => {
         console.error("Queue empty or error:", err);
       });
+    return () => { cancelled = true; };
   }, [navigate]);
 
   return <div style={{ padding: 20 }}>Yüklənir...</div>;

@@ -1,12 +1,15 @@
 package com.thyroai.tirads;
 
-
 import com.thyroai.examination.Examination;
 import com.thyroai.examination.ExaminationRepository;
+import com.thyroai.ratingqueue.ImageReservation;
+import com.thyroai.ratingqueue.ImageReservationRepository;
 import com.thyroai.tirads.dto.CreateTiradsResultRequest;
 import com.thyroai.tirads.dto.TiradsResultDTO;
 import com.thyroai.user.User;
 import com.thyroai.user.UserRepository;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -23,7 +26,10 @@ public class TiradsResultService {
     private final TiradsResultRepository repository;
     private final ExaminationRepository examinationRepository;
     private final UserRepository userRepository;
-    private final com.thyroai.ratingqueue.ImageReservationRepository reservationRepository;
+    private final ImageReservationRepository reservationRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Transactional
     public TiradsResultDTO create(UUID examinationId, CreateTiradsResultRequest request) {
@@ -35,6 +41,11 @@ public class TiradsResultService {
             throw new IllegalArgumentException("Bütün 5 TI-RADS kateqoriyası (composition, echogenicity, shape, margin, echogenic foci) mütləq seçilməlidir.");
         }
 
+        // Row-level lock on examination to prevent concurrent invariant violations (Algorithm 2)
+        entityManager.createNativeQuery("SELECT CAST(id AS text) FROM examinations WHERE id = :id FOR UPDATE")
+                .setParameter("id", examinationId)
+                .getResultList();
+
         Examination exam = examinationRepository.findById(examinationId)
                 .orElseThrow(() -> new IllegalArgumentException("Examination not found"));
 
@@ -44,8 +55,9 @@ public class TiradsResultService {
 
         // Defensive checks from Algorithm 2 (SubmitAnnotation):
         // 1. Check duplicate annotation
+        List<TiradsResult> existingResults = repository.findByExaminationIdOrderByCreatedAtDesc(examinationId);
         if (currentUserId != null) {
-            boolean alreadyAnnotated = repository.findByExaminationIdOrderByCreatedAtDesc(examinationId).stream()
+            boolean alreadyAnnotated = existingResults.stream()
                     .anyMatch(tr -> tr.getCreatedBy() != null && tr.getCreatedBy().getId().equals(currentUserId));
             if (alreadyAnnotated) {
                 throw new IllegalStateException("Bu şəkli artıq qiymətləndirmisiniz!");
@@ -53,18 +65,18 @@ public class TiradsResultService {
         }
 
         // 2. Check 3-annotation limit for non-common pool
-        long currentCount = repository.findByExaminationIdOrderByCreatedAtDesc(examinationId).size();
+        long currentCount = existingResults.size();
         if (!exam.isCommonPool() && currentCount >= 3) {
             throw new IllegalStateException("Bu şəkil artıq maksimum (3) həkim tərəfindən qiymətləndirilib!");
         }
 
         // 3. Close the active reservation for (exam, clinician)
         if (currentUserId != null) {
-            reservationRepository.findActiveByExamAndClinician(examinationId, currentUserId, java.time.LocalDateTime.now())
-                    .ifPresent(res -> {
-                        res.setStatus("COMPLETED");
-                        reservationRepository.save(res);
-                    });
+            List<ImageReservation> activeRes = reservationRepository.findActiveByExamAndClinician(examinationId, currentUserId);
+            for (ImageReservation res : activeRes) {
+                res.setStatus("COMPLETED");
+                reservationRepository.save(res);
+            }
         }
 
         TiradsResult result = TiradsResult.builder()
@@ -79,9 +91,9 @@ public class TiradsResultService {
                 .createdBy(currentUser)
                 .build();
 
-        result = repository.save(result);
-        
-        long count = repository.findByExaminationIdOrderByCreatedAtDesc(examinationId).size();
+        result = repository.saveAndFlush(result);
+
+        long count = currentCount + 1;
         if (!exam.isCommonPool() && count >= 3) {
             exam.setStatus("COMPLETED");
             examinationRepository.save(exam);
